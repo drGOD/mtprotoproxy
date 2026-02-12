@@ -117,6 +117,8 @@ CONFIG_DB_PATH = os.environ.get("MTPROTO_CONFIG_DB", "./config.db")
 API_LISTEN_HOST = os.environ.get("MTPROTO_API_HOST", "127.0.0.1")
 API_LISTEN_PORT = int(os.environ.get("MTPROTO_API_PORT", "8080"))
 
+QUIET = os.environ.get("MTPROTO_QUIET", "").strip().lower() in ("1", "true", "yes", "on")
+
 ADMIN_USER_ENV = os.environ.get("MTPROTO_ADMIN_USER")
 ADMIN_PASS_ENV = os.environ.get("MTPROTO_ADMIN_PASS")
 
@@ -2369,9 +2371,10 @@ def print_tg_info():
     print_default_warning = False
 
     if config.PORT == 3256:
-        print("The default port 3256 is used, this is not recommended", flush=True)
-        if not config.MODES["classic"] and not config.MODES["secure"]:
-            print("Since you have TLS only mode enabled the best port is 443", flush=True)
+        if not QUIET:
+            print_err("The default port 3256 is used, this is not recommended")
+            if not config.MODES["classic"] and not config.MODES["secure"]:
+                print_err("Since you have TLS only mode enabled the best port is 443")
         print_default_warning = True
 
     if not config.MY_DOMAIN:
@@ -2390,14 +2393,12 @@ def print_tg_info():
                 params_encodeded = urllib.parse.urlencode(params, safe=':')
                 classic_link = "tg://proxy?{}".format(params_encodeded)
                 proxy_links.append({"user": user, "link": classic_link})
-                print("{}: {}".format(user, classic_link), flush=True)
 
             if config.MODES["secure"]:
                 params = {"server": ip, "port": config.PORT, "secret": "dd" + secret}
                 params_encodeded = urllib.parse.urlencode(params, safe=':')
                 dd_link = "tg://proxy?{}".format(params_encodeded)
                 proxy_links.append({"user": user, "link": dd_link})
-                print("{}: {}".format(user, dd_link), flush=True)
 
             if config.MODES["tls"]:
                 tls_secret = "ee" + secret + config.TLS_DOMAIN.encode().hex()
@@ -2408,20 +2409,22 @@ def print_tg_info():
                 params_encodeded = urllib.parse.urlencode(params, safe=':')
                 tls_link = "tg://proxy?{}".format(params_encodeded)
                 proxy_links.append({"user": user, "link": tls_link})
-                print("{}: {}".format(user, tls_link), flush=True)
 
         if secret in ["00000000000000000000000000000000", "0123456789abcdef0123456789abcdef",
                       "00000000000000000000000000000001"]:
             msg = "The default secret {} is used, this is not recommended".format(secret)
-            print(msg, flush=True)
             random_secret = "".join(myrandom.choice("0123456789abcdef") for i in range(32))
-            print("You can change it to this random secret:", random_secret, flush=True)
+            if not QUIET:
+                print_err(msg)
+                print_err("You can change it to this random secret: %s" % random_secret)
             print_default_warning = True
 
     if config.TLS_DOMAIN == "www.google.com":
-        print("The default TLS_DOMAIN www.google.com is used, this is not recommended", flush=True)
+        if not QUIET:
+            print_err("The default TLS_DOMAIN www.google.com is used, this is not recommended")
         msg = "You should use random existing domain instead, bad clients are proxied there"
-        print(msg, flush=True)
+        if not QUIET:
+            print_err(msg)
         print_default_warning = True
 
     if print_default_warning:
