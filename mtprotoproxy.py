@@ -3180,14 +3180,6 @@ def _create_api_app():
             raise HTTPException(status_code=404, detail="client.html not found")
 
     @app.get("/")
-    @app.get("/ui")
-    def ui() -> Any:
-        try:
-            from fastapi.responses import HTMLResponse
-        except Exception:
-            raise HTTPException(status_code=500, detail="FastAPI HTMLResponse unavailable")
-        return HTMLResponse(_load_ui_html())
-
     @app.get("/client")
     @app.get("/client/")
     def client_ui() -> Any:
@@ -3196,6 +3188,15 @@ def _create_api_app():
         except Exception:
             raise HTTPException(status_code=500, detail="FastAPI HTMLResponse unavailable")
         return HTMLResponse(_load_client_html())
+
+    @app.get("/ui")
+    @app.get("/admin")
+    def ui() -> Any:
+        try:
+            from fastapi.responses import HTMLResponse
+        except Exception:
+            raise HTTPException(status_code=500, detail="FastAPI HTMLResponse unavailable")
+        return HTMLResponse(_load_ui_html())
 
     class ClientAuthStartModel(BaseModel):
         plan: str

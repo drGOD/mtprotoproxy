@@ -804,6 +804,23 @@ createApp({
         this.busy = false
       }
     },
+    async logout() {
+      this.busy = true
+      try {
+        await this.apiFetch('/client/logout', { method: 'POST', body: '{}' })
+      } catch (e) {
+        this.setStatus('err', 'Ошибка: ' + e.message)
+        return
+      } finally {
+        this.busy = false
+      }
+
+      this.closePayment()
+      this.closeQr()
+      this.me = null
+      this.view = 'landing'
+      this.setStatus('', '')
+    },
     fmtTs(ts) {
       try {
         return new Date(ts * 1000).toISOString().replace('T', ' ').replace('Z', '')
