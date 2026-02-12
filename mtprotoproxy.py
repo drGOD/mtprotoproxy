@@ -210,6 +210,7 @@ def _init_config_db() -> None:
             ("modes_classic", "0"),
             ("modes_secure", "1"),
             ("modes_tls", "1"),
+            ("user_max_tcp_conns_default", "5"),
             ("admin_user", "admin"),
         ]
         for key, default in defaults:
@@ -434,6 +435,10 @@ def _load_conf_dict_from_db() -> Dict[str, Any]:
         conf_dict["PORT"] = int(_get_kv(conn, "port"))
         conf_dict["TLS_DOMAIN"] = _get_kv(conn, "tls_domain")
         conf_dict["AD_TAG"] = _get_kv(conn, "ad_tag")
+        try:
+            default_max_tcp = int(_get_kv(conn, "user_max_tcp_conns_default"))
+        except Exception:
+            default_max_tcp = 0
         conf_dict["MODES"] = {
             "classic": _get_kv(conn, "modes_classic") not in ("0", "false", "False", ""),
             "secure": _get_kv(conn, "modes_secure") not in ("0", "false", "False", ""),
@@ -442,6 +447,11 @@ def _load_conf_dict_from_db() -> Dict[str, Any]:
 
         rows = conn.execute("SELECT name, secret FROM users ORDER BY name").fetchall()
         conf_dict["USERS"] = {str(r["name"]): str(r["secret"]) for r in rows}
+
+        # Default per-user concurrent TCP connections limit.
+        # If set (>0), apply same limit to all users.
+        if default_max_tcp and default_max_tcp > 0:
+            conf_dict["USER_MAX_TCP_CONNS"] = {u: int(default_max_tcp) for u in conf_dict["USERS"].keys()}
 
     return conf_dict
 
@@ -2602,6 +2612,7 @@ def _create_api_app():
         modes: ModesModel
         tls_domain: str
         ad_tag: str = ""
+        user_max_tcp_conns_default: int = Field(default=5, ge=0, le=1000)
 
     class UserCreateModel(BaseModel):
         name: str = Field(min_length=1, max_length=64)
@@ -2719,12 +2730,18 @@ def _create_api_app():
 
     def _dump_config_from_db() -> Dict[str, Any]:
         conf = _load_conf_dict_from_db()
+        try:
+            with _connect_config_db() as conn:
+                default_max_tcp = int(_get_kv(conn, "user_max_tcp_conns_default"))
+        except Exception:
+            default_max_tcp = 0
         return {
             "port": int(conf["PORT"]),
             "users": dict(conf["USERS"]),
             "modes": dict(conf["MODES"]),
             "tls_domain": str(conf["TLS_DOMAIN"]),
             "ad_tag": str(conf.get("AD_TAG", "")),
+            "user_max_tcp_conns_default": int(default_max_tcp),
         }
 
     @app.get("/health")
@@ -2864,6 +2881,7 @@ def _create_api_app():
             _set_kv(conn, "modes_classic", "1" if desired["modes"]["classic"] else "0")
             _set_kv(conn, "modes_secure", "1" if desired["modes"]["secure"] else "0")
             _set_kv(conn, "modes_tls", "1" if desired["modes"]["tls"] else "0")
+            _set_kv(conn, "user_max_tcp_conns_default", str(int(desired.get("user_max_tcp_conns_default", 0))))
 
             conn.execute("DELETE FROM users")
             now = int(time.time())

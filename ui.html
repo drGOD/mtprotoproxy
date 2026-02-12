@@ -207,6 +207,15 @@
         </div>
       </div>
 
+      <div class="row2" style="margin-top:10px;">
+        <div>
+          <label>Лимит одновременных подключений на пользователя</label>
+          <input type="number" v-model.number="cfg.user_max_tcp_conns_default" min="0" step="1" />
+          <div class="note">0 = без лимита. Например 5 = не более 5 одновременных подключений на каждого пользователя.</div>
+        </div>
+        <div></div>
+      </div>
+
       <div class="row" style="margin-top:10px;">
         <label>Режимы</label>
         <div class="toggles">
@@ -485,6 +494,7 @@ createApp({
         port: 443,
         tls_domain: "",
         ad_tag: "",
+        user_max_tcp_conns_default: 5,
         modes: { classic: false, secure: true, tls: true },
         users: {}
       },
