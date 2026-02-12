@@ -22,6 +22,7 @@ import traceback
 import sqlite3
 from typing import Any, Dict
 import secrets
+import json
 
 
 def _load_dotenv(path: str = ".env") -> None:
@@ -165,6 +166,11 @@ CLIENT_DEV_ISSUE_LINKS = os.environ.get("MTPROTO_DEV_ISSUE_LINKS", "").strip().l
     "on",
 )
 
+YOOKASSA_SHOP_ID = os.environ.get("MTPROTO_YOOKASSA_SHOP_ID", "").strip()
+YOOKASSA_SECRET_KEY = os.environ.get("MTPROTO_YOOKASSA_SECRET_KEY", "").strip()
+YOOKASSA_API_BASE = "https://api.yookassa.ru/v3"
+YOOKASSA_CURRENCY = "RUB"
+
 QUIET = os.environ.get("MTPROTO_QUIET", "").strip().lower() in ("1", "true", "yes", "on")
 
 STATS_SAMPLE_PERIOD = int(os.environ.get("MTPROTO_STATS_SAMPLE_PERIOD", "10"))
@@ -289,6 +295,25 @@ def _init_config_db() -> None:
 
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS yookassa_payments (
+                payment_id TEXT PRIMARY KEY,
+                subscription_id INTEGER NOT NULL,
+                client_id INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                amount TEXT NOT NULL,
+                currency TEXT NOT NULL,
+                idempotence_key TEXT NOT NULL,
+                processed INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_yookassa_payments_sub ON yookassa_payments(subscription_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_yookassa_payments_client ON yookassa_payments(client_id)")
+
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS client_proxy_accounts2 (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 client_id INTEGER NOT NULL,
@@ -351,6 +376,9 @@ def _init_config_db() -> None:
             ("modes_tls", "1"),
             ("user_max_tcp_conns_default", "5"),
             ("admin_user", "admin"),
+            ("yookassa_price_week", "100.00"),
+            ("yookassa_price_month", "250.00"),
+            ("yookassa_price_year", "2000.00"),
         ]
         for key, default in defaults:
             conn.execute(
@@ -3118,6 +3146,7 @@ def _create_api_app():
         tls_domain: str
         ad_tag: str = ""
         user_max_tcp_conns_default: int = Field(default=5, ge=0, le=1000)
+        yookassa_prices: Dict[str, str] = Field(default_factory=dict)
 
     class UserCreateModel(BaseModel):
         name: str = Field(min_length=1, max_length=64)
@@ -3275,6 +3304,62 @@ def _create_api_app():
         if p in ("year", "365d", "365", "год"):
             return 365 * 24 * 3600
         raise HTTPException(status_code=400, detail="unknown plan")
+
+    def _plan_to_price_rub_db(conn: sqlite3.Connection, plan: str) -> str:
+        p = _plan_normalize(plan)
+        key = ""
+        fallback = ""
+        if p == "week":
+            key = "yookassa_price_week"
+            fallback = "100.00"
+        elif p == "month":
+            key = "yookassa_price_month"
+            fallback = "250.00"
+        elif p == "year":
+            key = "yookassa_price_year"
+            fallback = "2000.00"
+        else:
+            raise HTTPException(status_code=400, detail="unknown plan")
+
+        try:
+            v = str(_get_kv(conn, key)).strip()
+        except Exception:
+            v = fallback
+
+        try:
+            n = float(v)
+            if n <= 0:
+                raise ValueError("non-positive")
+        except Exception:
+            n = float(fallback)
+        return f"{n:.2f}"
+
+    def _yookassa_api_request(method: str, path: str, body: dict | None, idempotence_key: str | None = None) -> dict:
+        if not YOOKASSA_SHOP_ID or not YOOKASSA_SECRET_KEY:
+            raise HTTPException(status_code=409, detail="yookassa not configured")
+        url = YOOKASSA_API_BASE.rstrip("/") + "/" + path.lstrip("/")
+        auth_b64 = base64.b64encode(f"{YOOKASSA_SHOP_ID}:{YOOKASSA_SECRET_KEY}".encode("utf-8")).decode("ascii")
+        data_b = json.dumps(body or {}, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(url, data=data_b if method.upper() != "GET" else None)
+        req.method = method.upper()
+        req.add_header("Authorization", f"Basic {auth_b64}")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Accept", "application/json")
+        if idempotence_key:
+            req.add_header("Idempotence-Key", idempotence_key)
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                raw = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            try:
+                raw = e.read().decode("utf-8")
+            except Exception:
+                raw = str(e)
+            raise HTTPException(status_code=502, detail=f"yookassa error: {raw}")
+        try:
+            return json.loads(raw)
+        except Exception:
+            raise HTTPException(status_code=502, detail=f"yookassa bad response: {raw}")
 
     def _plan_normalize(plan: str) -> str:
         p = (plan or "").strip().lower()
@@ -3597,43 +3682,160 @@ def _create_api_app():
     class ClientPaymentConfirmModel(BaseModel):
         subscription_id: int
 
-    @app.post("/client/payment/confirm")
-    def client_payment_confirm(body: ClientPaymentConfirmModel, request: Request) -> Any:
+    class ClientPaymentCompleteModel(BaseModel):
+        payment_id: str
+
+    class ClientPaymentCreateResponseModel(BaseModel):
+        status: str
+        payment_id: str
+        confirmation_token: str
+
+    @app.post("/client/payment/create", response_model=ClientPaymentCreateResponseModel)
+    def client_payment_create(body: ClientPaymentConfirmModel, request: Request) -> Any:
         _init_config_db()
         with _connect_config_db() as conn:
             client_id = _client_from_session(conn, request)
             row = conn.execute(
                 "SELECT id, plan, status, account_id FROM proxy_subscriptions WHERE id = ? AND client_id = ?",
-                (int(body.subscription_id), client_id),
+                (int(body.subscription_id), int(client_id)),
             ).fetchone()
             if not row:
-                raise HTTPException(status_code=404, detail="subscription not found")
-            if row["account_id"] is not None:
-                raise HTTPException(status_code=409, detail="subscription already assigned")
-            if str(row["status"]) == "active":
-                pass
-            elif str(row["status"]) != "pending":
-                raise HTTPException(status_code=409, detail="subscription not pending")
+                raise HTTPException(status_code=404, detail="order not found")
+            if str(row["status"]) != "pending" or row["account_id"] is not None:
+                raise HTTPException(status_code=409, detail="order not pending")
+
             plan = str(row["plan"])
-            seconds = _plan_to_seconds(plan)
-            now = _now_ts()
-            ends = now + seconds
+            amount = _plan_to_price_rub_db(conn, plan)
+            idem = secrets.token_hex(16)
+
+        payload = {
+            "amount": {"value": amount, "currency": YOOKASSA_CURRENCY},
+            "capture": True,
+            "confirmation": {"type": "embedded"},
+            "description": f"mtprotoproxy {plan}",
+            "metadata": {"subscription_id": int(body.subscription_id), "client_id": int(client_id)},
+        }
+        resp = _yookassa_api_request("POST", "/payments", payload, idempotence_key=idem)
+        payment_id = str(resp.get("id") or "")
+        token = str(((resp.get("confirmation") or {}).get("confirmation_token")) or "")
+        status = str(resp.get("status") or "")
+        if not payment_id or not token:
+            raise HTTPException(status_code=502, detail="yookassa missing confirmation token")
+
+        now = _now_ts()
+        _init_config_db()
+        with _connect_config_db() as conn:
             conn.execute(
-                "UPDATE proxy_subscriptions SET status = 'active', starts_at = ?, ends_at = ?, updated_at = ? WHERE id = ?",
-                (now, ends, now, int(row["id"])),
+                "INSERT OR REPLACE INTO yookassa_payments(payment_id, subscription_id, client_id, status, amount, currency, idempotence_key, processed, created_at, updated_at) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT processed FROM yookassa_payments WHERE payment_id = ?), 0), COALESCE((SELECT created_at FROM yookassa_payments WHERE payment_id = ?), ?), ?)",
+                (
+                    payment_id,
+                    int(body.subscription_id),
+                    int(client_id),
+                    status or "pending",
+                    amount,
+                    YOOKASSA_CURRENCY,
+                    idem,
+                    payment_id,
+                    payment_id,
+                    now,
+                    now,
+                ),
             )
             conn.commit()
-            proxy = _create_proxy_account(conn, client_id)
+
+        return {"status": "ok", "payment_id": payment_id, "confirmation_token": token}
+
+    @app.post("/client/payment/complete")
+    def client_payment_complete(body: ClientPaymentCompleteModel, request: Request) -> Any:
+        payment_id = (body.payment_id or "").strip()
+        if not payment_id:
+            raise HTTPException(status_code=400, detail="missing payment_id")
+
+        _init_config_db()
+        with _connect_config_db() as conn:
+            client_id = _client_from_session(conn, request)
+            row_pay = conn.execute(
+                "SELECT payment_id, subscription_id, client_id, processed FROM yookassa_payments WHERE payment_id = ?",
+                (payment_id,),
+            ).fetchone()
+            if not row_pay:
+                raise HTTPException(status_code=404, detail="payment not found")
+            if int(row_pay["client_id"]) != int(client_id):
+                raise HTTPException(status_code=403, detail="payment not yours")
+            if int(row_pay["processed"]) == 1:
+                return {"status": "ok"}
+            sub_id = int(row_pay["subscription_id"]) or 0
+
+        resp = _yookassa_api_request("GET", f"/payments/{payment_id}", None)
+        status = str(resp.get("status") or "")
+        metadata = resp.get("metadata") or {}
+        sub_id_api = int(metadata.get("subscription_id") or 0)
+        if sub_id_api and sub_id_api != sub_id:
+            sub_id = sub_id_api
+
+        now = _now_ts()
+        _init_config_db()
+        with _connect_config_db() as conn:
+            conn.execute(
+                "UPDATE yookassa_payments SET status = ?, updated_at = ? WHERE payment_id = ?",
+                (status or "", now, payment_id),
+            )
+            conn.commit()
+
+        if status != "succeeded":
+            raise HTTPException(status_code=409, detail=f"payment status: {status}")
+
+        # Apply success idempotently
+        _init_config_db()
+        with _connect_config_db() as conn:
+            row_pay2 = conn.execute(
+                "SELECT processed, subscription_id, client_id FROM yookassa_payments WHERE payment_id = ?",
+                (payment_id,),
+            ).fetchone()
+            if not row_pay2:
+                raise HTTPException(status_code=404, detail="payment not found")
+            if int(row_pay2["client_id"]) != int(client_id):
+                raise HTTPException(status_code=403, detail="payment not yours")
+            if int(row_pay2["processed"]) == 1:
+                return {"status": "ok"}
+
+            row_sub = conn.execute(
+                "SELECT id, plan, status, account_id FROM proxy_subscriptions WHERE id = ? AND client_id = ?",
+                (int(sub_id), int(client_id)),
+            ).fetchone()
+            if not row_sub:
+                conn.execute("UPDATE yookassa_payments SET processed = 1, updated_at = ? WHERE payment_id = ?", (now, payment_id))
+                conn.commit()
+                return {"status": "ok"}
+            if row_sub["account_id"] is not None:
+                conn.execute("UPDATE yookassa_payments SET processed = 1, updated_at = ? WHERE payment_id = ?", (now, payment_id))
+                conn.commit()
+                return {"status": "ok"}
+
+            plan = str(row_sub["plan"])
+            seconds = _plan_to_seconds(plan)
+            starts = _now_ts()
+            ends = starts + seconds
+            conn.execute(
+                "UPDATE proxy_subscriptions SET status = 'active', starts_at = ?, ends_at = ?, updated_at = ? WHERE id = ? AND client_id = ?",
+                (starts, ends, starts, int(sub_id), int(client_id)),
+            )
+            conn.commit()
+            proxy = _create_proxy_account(conn, int(client_id))
             conn.execute(
                 "UPDATE proxy_subscriptions SET account_id = ?, updated_at = ? WHERE id = ? AND client_id = ?",
-                (int(proxy.get("id") or 0), now, int(row["id"]), int(client_id)),
+                (int(proxy.get("id") or 0), starts, int(sub_id), int(client_id)),
             )
+            conn.execute("UPDATE yookassa_payments SET processed = 1, updated_at = ? WHERE payment_id = ?", (starts, payment_id))
             conn.commit()
             try:
-                _client_notify_proxy(conn, client_id, proxy.get("links") or [])
+                _client_notify_proxy(conn, int(client_id), proxy.get("links") or [])
             except Exception:
                 pass
-        return {"status": "ok", "subscription": {"id": int(row["id"]), "plan": plan, "status": "active", "starts_at": now, "ends_at": ends, "account_id": int(proxy.get("id") or 0)}, "proxy": proxy}
+
+        return {"status": "ok"}
+
 
     class ClientProxyCreateModel(BaseModel):
         plan: str
@@ -3730,8 +3932,14 @@ def _create_api_app():
         try:
             with _connect_config_db() as conn:
                 default_max_tcp = int(_get_kv(conn, "user_max_tcp_conns_default"))
+                y_week = str(_get_kv(conn, "yookassa_price_week"))
+                y_month = str(_get_kv(conn, "yookassa_price_month"))
+                y_year = str(_get_kv(conn, "yookassa_price_year"))
         except Exception:
             default_max_tcp = 0
+            y_week = "100.00"
+            y_month = "250.00"
+            y_year = "2000.00"
         return {
             "port": int(conf["PORT"]),
             "users": dict(conf["USERS"]),
@@ -3739,6 +3947,7 @@ def _create_api_app():
             "tls_domain": str(conf["TLS_DOMAIN"]),
             "ad_tag": str(conf.get("AD_TAG", "")),
             "user_max_tcp_conns_default": int(default_max_tcp),
+            "yookassa_prices": {"week": y_week, "month": y_month, "year": y_year},
         }
 
     @app.get("/health")
@@ -3879,6 +4088,15 @@ def _create_api_app():
             _set_kv(conn, "modes_secure", "1" if desired["modes"]["secure"] else "0")
             _set_kv(conn, "modes_tls", "1" if desired["modes"]["tls"] else "0")
             _set_kv(conn, "user_max_tcp_conns_default", str(int(desired.get("user_max_tcp_conns_default", 0))))
+
+            prices = desired.get("yookassa_prices") or {}
+            if isinstance(prices, dict):
+                if "week" in prices:
+                    _set_kv(conn, "yookassa_price_week", str(prices.get("week") or ""))
+                if "month" in prices:
+                    _set_kv(conn, "yookassa_price_month", str(prices.get("month") or ""))
+                if "year" in prices:
+                    _set_kv(conn, "yookassa_price_year", str(prices.get("year") or ""))
 
             conn.execute("DELETE FROM users")
             now = int(time.time())

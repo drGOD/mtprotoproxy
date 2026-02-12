@@ -239,6 +239,32 @@
     </section>
 
     <section class="card span-4">
+      <h2>Цены подписок (RUB)</h2>
+      <div class="row2">
+        <div>
+          <label>Неделя</label>
+          <input type="text" v-model.trim="cfg.yookassa_prices.week" placeholder="100.00" />
+        </div>
+        <div>
+          <label>Месяц</label>
+          <input type="text" v-model.trim="cfg.yookassa_prices.month" placeholder="250.00" />
+        </div>
+      </div>
+      <div class="row2" style="margin-top:10px;">
+        <div>
+          <label>Год</label>
+          <input type="text" v-model.trim="cfg.yookassa_prices.year" placeholder="2000.00" />
+        </div>
+        <div></div>
+      </div>
+      <div class="note">Формат: число (например 250 или 250.00). Используется при создании платежа YooKassa.</div>
+      <div class="actions">
+        <button class="primary" @click="saveConfig" :disabled="busy">Сохранить</button>
+        <button @click="refresh" :disabled="busy">Обновить</button>
+      </div>
+    </section>
+
+    <section class="card span-4">
       <h2>Админ аккаунт</h2>
       <div class="row2">
         <div>
@@ -316,54 +342,6 @@
       </div>
     </section>
 
-    <section class="card span-4">
-      <h2>API ключи</h2>
-
-      <div class="row2">
-        <div>
-          <label>Название (опционально)</label>
-          <input type="text" v-model.trim="keyCreate.name" placeholder="например ci" />
-        </div>
-        <div>
-          <label>&nbsp;</label>
-          <button class="primary" @click="createKey" :disabled="busy">Создать ключ</button>
-        </div>
-      </div>
-
-      <div v-if="createdKey.token" class="note" style="margin-top:10px;">
-        Новый ключ (показывается один раз):
-        <div class="mono" style="margin-top:6px; word-break: break-all;">{{ createdKey.token }}</div>
-      </div>
-
-      <table v-if="apiKeys.length" style="margin-top:10px;">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Имя</th>
-            <th>Prefix</th>
-            <th>Created</th>
-            <th class="right">Действия</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="k in apiKeys" :key="k.id">
-            <td class="mono">{{ k.id }}</td>
-            <td>{{ k.name }}</td>
-            <td class="mono">{{ k.prefix }}</td>
-            <td class="mono">{{ fmtTs(k.created_at) }}</td>
-            <td class="right">
-              <button class="danger" @click="deleteKey(k.id)" :disabled="busy">Удалить</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <div v-else class="note" style="margin-top:10px;">Ключей пока нет.</div>
-
-      <div class="actions" style="margin-top:10px;">
-        <button @click="loadKeys" :disabled="busy">Обновить список</button>
-      </div>
-    </section>
-
     <section class="card span-12">
       <h2>Мониторинг</h2>
 
@@ -437,6 +415,54 @@
         Данные берутся из встроенного API: <code class="mono">/stats/summary</code> и <code class="mono">/stats/timeseries</code>.
       </div>
     </section>
+
+    <section class="card span-4">
+      <h2>API ключи</h2>
+
+      <div class="row2">
+        <div>
+          <label>Название (опционально)</label>
+          <input type="text" v-model.trim="keyCreate.name" placeholder="например ci" />
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button class="primary" @click="createKey" :disabled="busy">Создать ключ</button>
+        </div>
+      </div>
+
+      <div v-if="createdKey.token" class="note" style="margin-top:10px;">
+        Новый ключ (показывается один раз):
+        <div class="mono" style="margin-top:6px; word-break: break-all;">{{ createdKey.token }}</div>
+      </div>
+
+      <table v-if="apiKeys.length" style="margin-top:10px;">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Имя</th>
+            <th>Prefix</th>
+            <th>Created</th>
+            <th class="right">Действия</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="k in apiKeys" :key="k.id">
+            <td class="mono">{{ k.id }}</td>
+            <td>{{ k.name }}</td>
+            <td class="mono">{{ k.prefix }}</td>
+            <td class="mono">{{ fmtTs(k.created_at) }}</td>
+            <td class="right">
+              <button class="danger" @click="deleteKey(k.id)" :disabled="busy">Удалить</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div v-else class="note" style="margin-top:10px;">Ключей пока нет.</div>
+
+      <div class="actions" style="margin-top:10px;">
+        <button @click="loadKeys" :disabled="busy">Обновить список</button>
+      </div>
+    </section>
   </div>
 
   <div v-if="qrModal.open" class="modal-backdrop" @click.self="closeQr">
@@ -496,7 +522,8 @@ createApp({
         ad_tag: "",
         user_max_tcp_conns_default: 5,
         modes: { classic: false, secure: true, tls: true },
-        users: {}
+        users: {},
+        yookassa_prices: { week: "100.00", month: "250.00", year: "2000.00" }
       },
       newUser: { name: "", secret: "" },
       editUser: { open: false, name: "", secret: "" },
