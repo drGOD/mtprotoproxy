@@ -40,10 +40,10 @@ The proxy can run with embedded REST API and store its config in local sqlite.
 1. Install deps: `python3 -m pip install -r requirements.txt`
 2. Run proxy + API in one process: `python3 mtprotoproxy.py`
 
-By default API listens on `127.0.0.1:8080`.
+By default API listens on `0.0.0.0:8080` (accessible from external IPs).
 You can change it using env vars: `API_HOST`, `API_PORT`.
 
-Embedded one-page UI is available at `http://127.0.0.1:8080/` (or `/ui`).
+Embedded one-page UI is available at `http://<your-server-ip>:8080/` (or `/ui`).
 
 ### Authentication
 
@@ -91,3 +91,28 @@ Useful env vars for docker-compose:
 - `API_PORT=8080`
 - `CONFIG_DB=/home/tgproxy/data/config.db`
 - `ADMIN_USER`, `ADMIN_PASS`
+
+## Server Deployment
+
+For server deployment, make sure to:
+
+1. Set `API_HOST=0.0.0.0` to allow external access
+2. Configure firewall to allow port 8080 (or your API_PORT)
+   ```bash
+   # Ubuntu/Debian
+   sudo ufw allow 8080
+   
+   # CentOS/RHEL
+   sudo firewall-cmd --permanent --add-port=8080/tcp
+   sudo firewall-cmd --reload
+   ```
+3. Set `PUBLIC_BASE_URL=http://your-server-ip:8080` for proper client links
+
+## Troubleshooting
+
+If UI/API is not accessible from external IP:
+- Check that API_HOST is set to `0.0.0.0`
+- Verify firewall settings
+- Check if port is open: `netstat -tlnp | grep 8080`
+- Test locally: `curl http://localhost:8080/`
+- Check logs for errors

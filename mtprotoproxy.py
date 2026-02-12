@@ -133,7 +133,7 @@ config = {}
 config_source = os.environ.get("CONFIG_SOURCE", "db")
 
 CONFIG_DB_PATH = os.environ.get("CONFIG_DB", "./config.db")
-API_LISTEN_HOST = os.environ.get("API_HOST", "127.0.0.1")
+API_LISTEN_HOST = os.environ.get("API_HOST", "0.0.0.0")
 API_LISTEN_PORT = int(os.environ.get("API_PORT", "8080"))
 
 CLIENT_PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").strip()
