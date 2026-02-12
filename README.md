@@ -7,7 +7,7 @@ Fast and simple to setup MTProto proxy written in Python.
 1. `git clone -b stable https://github.com/alexbers/mtprotoproxy.git; cd mtprotoproxy`
 2. Install deps: `python3 -m pip install -r requirements.txt`
 3. Run: `python3 mtprotoproxy.py`
-4. *(optional, get a link to share the proxy)* `docker-compose logs`
+4. *(optional, get a link to share the proxy)* check proxy logs (it prints `tg://proxy` links)
 
 ![Demo](https://alexbers.com/mtprotoproxy/install_demo_v2.gif)
 
@@ -71,3 +71,23 @@ Config source can be switched with `MTPROTO_CONFIG_SOURCE` (`db` or `file`).
 
 When you update config via API (`PUT /config`, `/users` endpoints), proxy automatically reloads it.
 Changing `PORT` at runtime is not supported and requires restart.
+
+## Docker / docker-compose
+
+Container mode runs the same single-process setup: proxy + embedded REST API + embedded UI.
+
+1. Build & run: `docker-compose up -d --build`
+2. UI: `http://<host>:8080/` (or `/ui`)
+
+Persistent config is stored in sqlite database.
+If `config.db` does not exist yet, it will be created on first start.
+
+Default `docker-compose.yml` uses a named volume for `/home/tgproxy/data`.
+If you prefer a bind-mount to host folder, mount `./data:/home/tgproxy/data` and ensure it is writable by uid `10000`.
+
+Useful env vars for docker-compose:
+
+- `MTPROTO_API_HOST=0.0.0.0` (to expose API/UI)
+- `MTPROTO_API_PORT=8080`
+- `MTPROTO_CONFIG_DB=/home/tgproxy/data/config.db`
+- `MTPROTO_ADMIN_USER`, `MTPROTO_ADMIN_PASS`
