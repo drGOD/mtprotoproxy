@@ -45,6 +45,27 @@ You can change it using env vars: `MTPROTO_API_HOST`, `MTPROTO_API_PORT`.
 
 Embedded one-page UI is available at `http://127.0.0.1:8080/` (or `/ui`).
 
+### Authentication
+
+Config endpoints are protected with Bearer token.
+
+- Login endpoint: `POST /auth/login` with JSON `{ "username": "...", "password": "..." }`
+- Response: `{ "token": "..." }`
+- Use token in requests: `Authorization: Bearer <token>`
+
+Admin management endpoints:
+
+- Change password: `POST /auth/change-password` with JSON `{ "old_password": "...", "new_password": "..." }`
+- API keys:
+  - List: `GET /auth/keys`
+  - Create: `POST /auth/keys` with JSON `{ "name": "" }` (returns token once)
+  - Delete: `DELETE /auth/keys/{id}`
+
+Admin credentials are configured via env vars:
+
+- `MTPROTO_ADMIN_USER` (default: `admin`)
+- `MTPROTO_ADMIN_PASS` (if not set, password is generated on first start and printed to stderr)
+
 Config is stored in `./config.db` by default (env: `MTPROTO_CONFIG_DB`).
 Config source can be switched with `MTPROTO_CONFIG_SOURCE` (`db` or `file`).
 

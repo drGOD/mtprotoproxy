@@ -5,24 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MTProto Proxy Manager</title>
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <style>
     :root {
-      --bg: #0b1220;
-      --panel: #111a2e;
-      --text: #e7eefc;
-      --muted: #a9b4cc;
-      --accent: #4f8cff;
-      --danger: #ff5b6e;
-      --ok: #44d19d;
-      --border: rgba(231, 238, 252, 0.12);
+      --bg: #ffffff;
+      --panel: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --accent: #2563eb;
+      --danger: #dc2626;
+      --ok: #16a34a;
+      --border: rgba(15, 23, 42, 0.12);
+      --shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Ubuntu, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
-      background: radial-gradient(1200px 800px at 20% 0%, rgba(79,140,255,0.22), transparent 60%),
-                  radial-gradient(900px 600px at 80% 20%, rgba(68,209,157,0.18), transparent 55%),
-                  var(--bg);
+      background: var(--bg);
       color: var(--text);
     }
     a { color: var(--accent); text-decoration: none; }
@@ -32,7 +32,7 @@
     .sub { color: var(--muted); font-size: 13px; }
     .grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
     @media (min-width: 900px) { .grid { grid-template-columns: 1.2fr 0.8fr; } }
-    .card { background: rgba(17,26,46,0.85); border: 1px solid var(--border); border-radius: 14px; padding: 16px; backdrop-filter: blur(8px); }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; box-shadow: var(--shadow); }
     .card h2 { font-size: 14px; margin: 0 0 10px 0; color: var(--text); }
     .row { display: grid; grid-template-columns: 1fr; gap: 10px; }
     .row2 { display: grid; grid-template-columns: 1fr; gap: 10px; }
@@ -40,7 +40,16 @@
     label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
     input[type="text"], input[type="number"] {
       width: 100%;
-      background: rgba(11,18,32,0.9);
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      color: var(--text);
+      outline: none;
+    }
+    input[type="password"] {
+      width: 100%;
+      background: #ffffff;
       border: 1px solid var(--border);
       border-radius: 10px;
       padding: 10px 12px;
@@ -56,21 +65,21 @@
       border: 1px solid var(--border);
       padding: 8px 10px;
       border-radius: 999px;
-      background: rgba(11,18,32,0.55);
+      background: #f8fafc;
       user-select: none;
     }
     .toggle input { accent-color: var(--accent); }
     .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
     button {
       border: 1px solid var(--border);
-      background: rgba(11,18,32,0.75);
+      background: #ffffff;
       color: var(--text);
       padding: 10px 12px;
       border-radius: 10px;
       cursor: pointer;
     }
-    button.primary { background: rgba(79,140,255,0.18); border-color: rgba(79,140,255,0.45); }
-    button.danger { background: rgba(255,91,110,0.12); border-color: rgba(255,91,110,0.45); }
+    button.primary { background: rgba(37,99,235,0.10); border-color: rgba(37,99,235,0.35); }
+    button.danger { background: rgba(220,38,38,0.08); border-color: rgba(220,38,38,0.35); }
     button:disabled { opacity: 0.55; cursor: not-allowed; }
     .note { font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.35; }
     .status { font-size: 12px; color: var(--muted); }
@@ -79,10 +88,46 @@
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; border-bottom: 1px solid var(--border); padding: 10px 8px; font-size: 13px; }
     th { color: var(--muted); font-weight: 600; }
-    code { background: rgba(11,18,32,0.7); padding: 2px 6px; border-radius: 8px; border: 1px solid var(--border); }
+    code { background: #f1f5f9; padding: 2px 6px; border-radius: 8px; border: 1px solid var(--border); }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     .right { text-align: right; }
     .pill { display: inline-flex; gap: 8px; align-items: center; }
+    .top-actions { display: flex; gap: 10px; align-items: center; }
+    .login-wrap { max-width: 520px; margin: 16px auto 0 auto; }
+    .divider { height: 1px; background: var(--border); margin: 12px 0; }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.30);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 18px;
+    }
+    .modal {
+      width: min(560px, 100%);
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      padding: 16px;
+    }
+    .modal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .qr {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      align-items: start;
+    }
+    @media (min-width: 520px) { .qr { grid-template-columns: 220px 1fr; } }
+    .qr-box { width: 220px; height: 220px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    .qr-box img { width: 220px; height: 220px; display: block; }
   </style>
 </head>
 <body>
@@ -92,10 +137,42 @@
       <h1>MTProto Proxy Manager</h1>
       <div class="sub">UI работает с REST API прокси. По умолчанию: <code class="mono">/config</code> и <code class="mono">/users</code>.</div>
     </div>
-    <div class="status" :class="statusClass">{{ statusText }}</div>
+    <div class="top-actions">
+      <div class="status" :class="statusClass">{{ statusText }}</div>
+      <button v-if="token" @click="logout" :disabled="busy">Выйти</button>
+    </div>
   </header>
 
-  <div class="grid">
+  <div v-if="!token" class="login-wrap">
+    <section class="card">
+      <h2>Вход</h2>
+      <div class="row2">
+        <div>
+          <label>Логин</label>
+          <input type="text" v-model.trim="login.username" autocomplete="username" placeholder="admin" />
+        </div>
+        <div>
+          <label>Пароль</label>
+          <input type="password" v-model.trim="login.password" autocomplete="current-password" placeholder="пароль" />
+        </div>
+      </div>
+      <div class="actions">
+        <button class="primary" @click="doLogin" :disabled="busy || !login.username || !login.password">Войти</button>
+      </div>
+      <div class="note">
+        Пароль берётся из переменной окружения <code class="mono">MTPROTO_ADMIN_PASS</code>.
+        Если не задан — генерируется при первом запуске и выводится в stderr.
+      </div>
+      <div class="divider"></div>
+      <div class="note">
+        API base URL:
+        <input type="text" v-model.trim="apiBase" class="mono" style="margin-top:6px;" placeholder="например http://127.0.0.1:8080" />
+        <div style="margin-top:6px;">Если UI открыт с того же хоста/порта, оставь пустым.</div>
+      </div>
+    </section>
+  </div>
+
+  <div v-else class="grid">
     <section class="card">
       <h2>Конфигурация</h2>
 
@@ -156,6 +233,7 @@
         </div>
 
         <div class="actions">
+          <button @click="generateSecret" :disabled="busy">Сгенерировать secret</button>
           <button class="primary" @click="createUser" :disabled="busy || !newUser.name || !newUser.secret">Добавить</button>
         </div>
 
@@ -173,6 +251,7 @@
               <td class="mono">{{ u.secret }}</td>
               <td class="right">
                 <span class="pill">
+                  <button @click="openQr(u.name)" :disabled="busy">QR</button>
                   <button @click="startEdit(u)" :disabled="busy">Изменить</button>
                   <button class="danger" @click="deleteUser(u.name)" :disabled="busy">Удалить</button>
                 </span>
@@ -198,6 +277,108 @@
         Подсказка: Secret — 32 hex-символа. После добавления/изменения прокси reload-ится автоматически.
       </div>
     </section>
+
+    <section class="card">
+      <h2>Админ аккаунт</h2>
+      <div class="row2">
+        <div>
+          <label>Старый пароль</label>
+          <input type="password" v-model.trim="pw.old" autocomplete="current-password" />
+        </div>
+        <div>
+          <label>Новый пароль</label>
+          <input type="password" v-model.trim="pw.new" autocomplete="new-password" />
+        </div>
+      </div>
+      <div class="actions">
+        <button class="primary" @click="changePassword" :disabled="busy || !pw.old || !pw.new">Сменить пароль</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>API ключи</h2>
+
+      <div class="row2">
+        <div>
+          <label>Название (опционально)</label>
+          <input type="text" v-model.trim="keyCreate.name" placeholder="например ci" />
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button class="primary" @click="createKey" :disabled="busy">Создать ключ</button>
+        </div>
+      </div>
+
+      <div v-if="createdKey.token" class="note" style="margin-top:10px;">
+        Новый ключ (показывается один раз):
+        <div class="mono" style="margin-top:6px; word-break: break-all;">{{ createdKey.token }}</div>
+      </div>
+
+      <table v-if="apiKeys.length" style="margin-top:10px;">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Имя</th>
+            <th>Prefix</th>
+            <th>Created</th>
+            <th class="right">Действия</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="k in apiKeys" :key="k.id">
+            <td class="mono">{{ k.id }}</td>
+            <td>{{ k.name }}</td>
+            <td class="mono">{{ k.prefix }}</td>
+            <td class="mono">{{ fmtTs(k.created_at) }}</td>
+            <td class="right">
+              <button class="danger" @click="deleteKey(k.id)" :disabled="busy">Удалить</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div v-else class="note" style="margin-top:10px;">Ключей пока нет.</div>
+
+      <div class="actions" style="margin-top:10px;">
+        <button @click="loadKeys" :disabled="busy">Обновить список</button>
+      </div>
+    </section>
+  </div>
+
+  <div v-if="qrModal.open" class="modal-backdrop" @click.self="closeQr">
+    <div class="modal">
+      <div class="modal-head">
+        <div>
+          <div style="font-weight: 600;">QR: <span class="mono">{{ qrModal.user }}</span></div>
+          <div class="note" style="margin-top:4px;">Выбери режим и отсканируй QR в Telegram</div>
+        </div>
+        <button @click="closeQr">Закрыть</button>
+      </div>
+
+      <div class="row2" style="margin-bottom:10px;">
+        <div>
+          <label>Режим</label>
+          <select v-model="qrModal.mode" style="width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:#fff;">
+            <option v-for="m in qrAvailableModes" :key="m" :value="m">{{ m }}</option>
+          </select>
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button @click="renderQr" :disabled="busy || !qrLink">Обновить QR</button>
+        </div>
+      </div>
+
+      <div class="qr">
+        <div class="qr-box" ref="qrBox" id="qrcode"></div>
+        <div>
+          <label>Ссылка</label>
+          <input type="text" class="mono" :value="qrLink" readonly />
+          <div class="actions" style="margin-top:10px;">
+            <button class="primary" @click="copyQrLink" :disabled="!qrLink">Копировать</button>
+          </div>
+          <div class="note" style="margin-top:10px;">Если QR не отображается, проверь что загружена библиотека QRCode (CDN).</div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -211,6 +392,9 @@ createApp({
       busy: false,
       statusText: "", 
       statusKind: "",
+      token: "",
+      login: { username: "admin", password: "" },
+      pw: { old: "", new: "" },
       cfg: {
         port: 443,
         tls_domain: "",
@@ -219,7 +403,13 @@ createApp({
         users: {}
       },
       newUser: { name: "", secret: "" },
-      editUser: { open: false, name: "", secret: "" }
+      editUser: { open: false, name: "", secret: "" },
+      apiKeys: [],
+      keyCreate: { name: "" },
+      createdKey: { token: "" }
+      ,
+      links: [],
+      qrModal: { open: false, user: "", mode: "secure" }
     }
   },
   computed: {
@@ -234,6 +424,20 @@ createApp({
         .sort()
         .map((k) => ({ name: k, secret: String(obj[k]) }))
     }
+    ,
+    qrAvailableModes() {
+      const modes = new Set()
+      for (const l of (this.links || [])) {
+        if (l.user === this.qrModal.user) modes.add(l.mode)
+      }
+      const arr = Array.from(modes)
+      if (arr.length) return arr
+      return ["secure", "tls", "classic"]
+    },
+    qrLink() {
+      const found = (this.links || []).find((l) => l.user === this.qrModal.user && l.mode === this.qrModal.mode)
+      return found ? found.link : ""
+    }
   },
   methods: {
     endpoint(path) {
@@ -246,30 +450,182 @@ createApp({
       this.statusText = text
     },
     async apiFetch(path, opts) {
-      const res = await fetch(this.endpoint(path), {
-        headers: { "Content-Type": "application/json" },
-        ...opts
-      })
+      const headers = { "Content-Type": "application/json" }
+      if (this.token) headers["Authorization"] = `Bearer ${this.token}`
+      const res = await fetch(this.endpoint(path), { headers, ...opts })
       const ct = res.headers.get("content-type") || ""
       let body = null
       if (ct.includes("application/json")) body = await res.json()
       else body = await res.text()
       if (!res.ok) {
         const detail = body && body.detail ? body.detail : body
+        if (res.status === 401) {
+          this.token = ""
+          try { localStorage.removeItem("mtproxy_token") } catch (e) {}
+        }
         throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail))
       }
       return body
+    },
+    randomHex32() {
+      const arr = new Uint8Array(16)
+      crypto.getRandomValues(arr)
+      return Array.from(arr).map((b) => b.toString(16).padStart(2, "0")).join("")
+    },
+    generateSecret() {
+      try {
+        this.newUser.secret = this.randomHex32()
+      } catch (e) {
+        this.setStatus("err", "Не удалось сгенерировать secret")
+      }
+    },
+    async doLogin() {
+      this.busy = true
+      try {
+        const payload = { username: this.login.username, password: this.login.password }
+        const resp = await this.apiFetch("/auth/login", { method: "POST", body: JSON.stringify(payload) })
+        this.token = resp.token
+        try { localStorage.setItem("mtproxy_token", this.token) } catch (e) {}
+        this.login.password = ""
+        await this.refresh()
+        this.setStatus("ok", "Вход выполнен")
+      } catch (e) {
+        this.setStatus("err", "Ошибка входа: " + e.message)
+      } finally {
+        this.busy = false
+      }
+    },
+    logout() {
+      this.token = ""
+      this.login.password = ""
+      this.pw.old = ""
+      this.pw.new = ""
+      try { localStorage.removeItem("mtproxy_token") } catch (e) {}
+      this.setStatus("", "")
+    },
+    fmtTs(ts) {
+      try {
+        return new Date(ts * 1000).toISOString().replace('T', ' ').replace('Z', '')
+      } catch (e) {
+        return String(ts)
+      }
+    },
+    async changePassword() {
+      this.busy = true
+      try {
+        const payload = { old_password: this.pw.old, new_password: this.pw.new }
+        await this.apiFetch("/auth/change-password", { method: "POST", body: JSON.stringify(payload) })
+        this.pw.old = ""
+        this.pw.new = ""
+        this.setStatus("ok", "Пароль изменён")
+      } catch (e) {
+        this.setStatus("err", "Ошибка смены пароля: " + e.message)
+      } finally {
+        this.busy = false
+      }
+    },
+    async loadKeys() {
+      this.busy = true
+      try {
+        const keys = await this.apiFetch("/auth/keys", { method: "GET" })
+        this.apiKeys = keys
+        this.setStatus("ok", "Ключи загружены")
+      } catch (e) {
+        this.setStatus("err", "Ошибка загрузки ключей: " + e.message)
+      } finally {
+        this.busy = false
+      }
+    },
+    async createKey() {
+      this.busy = true
+      try {
+        this.createdKey.token = ""
+        const payload = { name: this.keyCreate.name || "" }
+        const resp = await this.apiFetch("/auth/keys", { method: "POST", body: JSON.stringify(payload) })
+        this.createdKey.token = resp.token
+        this.keyCreate.name = ""
+        await this.loadKeys()
+        this.setStatus("ok", "Ключ создан")
+      } catch (e) {
+        this.setStatus("err", "Ошибка создания ключа: " + e.message)
+      } finally {
+        this.busy = false
+      }
+    },
+    async deleteKey(id) {
+      if (!confirm(`Удалить ключ ${id}?`)) return
+      this.busy = true
+      try {
+        await this.apiFetch(`/auth/keys/${encodeURIComponent(id)}`, { method: "DELETE" })
+        await this.loadKeys()
+        this.setStatus("ok", "Ключ удалён")
+      } catch (e) {
+        this.setStatus("err", "Ошибка удаления ключа: " + e.message)
+      } finally {
+        this.busy = false
+      }
     },
     async refresh() {
       this.busy = true
       try {
         const cfg = await this.apiFetch("/config", { method: "GET" })
         this.cfg = cfg
+        await this.loadLinks()
+        await this.loadKeys()
         this.setStatus("ok", "Загружено")
       } catch (e) {
         this.setStatus("err", "Ошибка загрузки: " + e.message)
       } finally {
         this.busy = false
+      }
+    },
+    async loadLinks() {
+      const resp = await this.apiFetch("/links", { method: "GET" })
+      this.links = resp.links || []
+    },
+    async openQr(user) {
+      this.busy = true
+      try {
+        await this.loadLinks()
+        this.qrModal.open = true
+        this.qrModal.user = user
+        const modes = this.qrAvailableModes
+        this.qrModal.mode = modes.includes("secure") ? "secure" : modes[0]
+        this.$nextTick(() => this.renderQr())
+      } catch (e) {
+        this.setStatus("err", "Ошибка получения ссылок: " + e.message)
+      } finally {
+        this.busy = false
+      }
+    },
+    closeQr() {
+      this.qrModal.open = false
+      this.qrModal.user = ""
+    },
+    async renderQr() {
+      try {
+        if (!this.qrLink) return
+        const box = this.$refs.qrBox
+        if (!box) return
+        if (typeof QRCode === "undefined") throw new Error("QRCode library not loaded")
+        // clear previous QR
+        while (box.firstChild) box.removeChild(box.firstChild)
+        new QRCode(box, {
+          text: this.qrLink,
+          width: 220,
+          height: 220,
+          correctLevel: QRCode.CorrectLevel.M
+        })
+      } catch (e) {
+        this.setStatus("err", "QR ошибка: " + e.message)
+      }
+    },
+    async copyQrLink() {
+      try {
+        await navigator.clipboard.writeText(this.qrLink)
+        this.setStatus("ok", "Ссылка скопирована")
+      } catch (e) {
+        this.setStatus("err", "Не удалось скопировать")
       }
     },
     async saveConfig() {
@@ -340,7 +696,8 @@ createApp({
   },
   mounted() {
     this.setStatus("", "")
-    this.refresh()
+    try { this.token = localStorage.getItem("mtproxy_token") || "" } catch (e) {}
+    if (this.token) this.refresh()
   }
 }).mount('#app')
 </script>

@@ -21,15 +21,17 @@ import stat
 import traceback
 import sqlite3
 from typing import Any, Dict
+import secrets
 
 try:
     import uvicorn
-    from fastapi import FastAPI, HTTPException
+    from fastapi import FastAPI, HTTPException, Request
     from pydantic import BaseModel, Field
 except ImportError:  # pragma: no cover
     uvicorn = None
     FastAPI = None
     HTTPException = None
+    Request = None
     BaseModel = None
     Field = None
 
@@ -115,6 +117,9 @@ CONFIG_DB_PATH = os.environ.get("MTPROTO_CONFIG_DB", "./config.db")
 API_LISTEN_HOST = os.environ.get("MTPROTO_API_HOST", "127.0.0.1")
 API_LISTEN_PORT = int(os.environ.get("MTPROTO_API_PORT", "8080"))
 
+ADMIN_USER_ENV = os.environ.get("MTPROTO_ADMIN_USER")
+ADMIN_PASS_ENV = os.environ.get("MTPROTO_ADMIN_PASS")
+
 _config_db_inited = False
 _proxy_listen_port_at_start: int = 0
 _api_server = None
@@ -151,6 +156,18 @@ def _init_config_db() -> None:
             """
         )
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT,
+                token_hash TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                revoked INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+
         now = int(time.time())
         defaults = [
             ("port", "443"),
@@ -159,12 +176,38 @@ def _init_config_db() -> None:
             ("modes_classic", "0"),
             ("modes_secure", "1"),
             ("modes_tls", "1"),
+            ("admin_user", "admin"),
         ]
         for key, default in defaults:
             conn.execute(
                 "INSERT OR IGNORE INTO kv(key, value, updated_at) VALUES(?, ?, ?)",
                 (key, default, now),
             )
+
+        # Admin credentials
+        row_user = conn.execute("SELECT value FROM kv WHERE key = ?", ("admin_user",)).fetchone()
+        row_hash = conn.execute("SELECT value FROM kv WHERE key = ?", ("admin_pass_hash",)).fetchone()
+        if ADMIN_USER_ENV:
+            conn.execute(
+                "INSERT INTO kv(key, value, updated_at) VALUES(?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                ("admin_user", ADMIN_USER_ENV, now),
+            )
+        if ADMIN_PASS_ENV:
+            pass_hash = _hash_password(ADMIN_PASS_ENV)
+            conn.execute(
+                "INSERT INTO kv(key, value, updated_at) VALUES(?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                ("admin_pass_hash", pass_hash, now),
+            )
+        elif not row_hash:
+            generated = secrets.token_urlsafe(12)
+            pass_hash = _hash_password(generated)
+            conn.execute(
+                "INSERT INTO kv(key, value, updated_at) VALUES(?, ?, ?)",
+                ("admin_pass_hash", pass_hash, now),
+            )
+            print_err("Generated admin password (set MTPROTO_ADMIN_PASS to override): %s" % generated)
 
         # ensure at least one user exists
         has_user = conn.execute("SELECT 1 FROM users LIMIT 1").fetchone()
@@ -176,6 +219,69 @@ def _init_config_db() -> None:
         conn.commit()
 
     _config_db_inited = True
+
+
+def _hash_password(password: str, iterations: int = 200_000) -> str:
+    salt = secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return "pbkdf2_sha256$%d$%s$%s" % (
+        iterations,
+        base64.b64encode(salt).decode("ascii"),
+        base64.b64encode(dk).decode("ascii"),
+    )
+
+
+def _verify_password(password: str, encoded: str) -> bool:
+    try:
+        algo, iter_s, salt_b64, hash_b64 = encoded.split("$", 3)
+        if algo != "pbkdf2_sha256":
+            return False
+        iterations = int(iter_s)
+        salt = base64.b64decode(salt_b64.encode("ascii"))
+        expected = base64.b64decode(hash_b64.encode("ascii"))
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+        return hmac.compare_digest(dk, expected)
+    except Exception:
+        return False
+
+
+def _issue_token(conn: sqlite3.Connection, ttl_seconds: int = 24 * 60 * 60) -> str:
+    token = secrets.token_urlsafe(32)
+    now = int(time.time())
+    exp = now + ttl_seconds
+    _set_kv(conn, "api_token", token)
+    _set_kv(conn, "api_token_exp", str(exp))
+    conn.commit()
+    return token
+
+
+def _get_active_token(conn: sqlite3.Connection) -> str:
+    try:
+        token = _get_kv(conn, "api_token")
+        exp_s = _get_kv(conn, "api_token_exp")
+        exp = int(exp_s)
+        if int(time.time()) >= exp:
+            return ""
+        return token
+    except Exception:
+        return ""
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _format_token_prefix(token_hash: str) -> str:
+    return token_hash[:12]
+
+
+def _is_valid_api_key(conn: sqlite3.Connection, token: str) -> bool:
+    token_hash = _hash_token(token)
+    row = conn.execute(
+        "SELECT 1 FROM api_keys WHERE token_hash = ? AND revoked = 0",
+        (token_hash,),
+    ).fetchone()
+    return bool(row)
 
 
 def _get_kv(conn: sqlite3.Connection, key: str) -> str:
@@ -2376,7 +2482,89 @@ def _create_api_app():
     class UserUpdateModel(BaseModel):
         secret: str
 
+    class LoginRequestModel(BaseModel):
+        username: str
+        password: str
+
+    class LoginResponseModel(BaseModel):
+        token: str
+
+    class ChangePasswordRequestModel(BaseModel):
+        old_password: str
+        new_password: str = Field(min_length=8)
+
+    class ApiKeyCreateRequestModel(BaseModel):
+        name: str = ""
+
+    class ApiKeyCreateResponseModel(BaseModel):
+        id: int
+        token: str
+        prefix: str
+
+    class ApiKeyListItemModel(BaseModel):
+        id: int
+        name: str
+        prefix: str
+        created_at: int
+
     app = FastAPI(title="mtprotoproxy")
+
+    public_paths = {"/", "/ui", "/health", "/auth/login", "/favicon.ico"}
+
+    def _auth_error(status_code: int, detail: str):
+        try:
+            from fastapi.responses import JSONResponse
+        except Exception:
+            raise HTTPException(status_code=status_code, detail=detail)
+        return JSONResponse(status_code=status_code, content={"detail": detail})
+
+    @app.middleware("http")
+    async def auth_middleware(request: Request, call_next):
+        path = request.url.path
+        if path in public_paths:
+            return await call_next(request)
+
+        auth = request.headers.get("authorization") or ""
+        if not auth.lower().startswith("bearer "):
+            return _auth_error(401, "missing bearer token")
+        provided = auth.split(" ", 1)[1].strip()
+
+        _init_config_db()
+        with _connect_config_db() as conn:
+            # Backward compatibility: single token stored in kv
+            active = _get_active_token(conn)
+            ok = bool(active and hmac.compare_digest(provided, active))
+            if not ok:
+                ok = _is_valid_api_key(conn, provided)
+
+        if not ok:
+            return _auth_error(401, "invalid bearer token")
+
+        return await call_next(request)
+
+    def _build_proxy_links() -> list[dict[str, str]]:
+        # Similar to print_tg_info(), but without printing.
+        if not config.MY_DOMAIN:
+            ip_addrs = [ip for ip in my_ip_info.values() if ip]
+            if not ip_addrs:
+                ip_addrs = ["YOUR_IP"]
+        else:
+            ip_addrs = [config.MY_DOMAIN]
+
+        links: list[dict[str, str]] = []
+        for user, secret in sorted(config.USERS.items(), key=lambda x: x[0]):
+            for ip in ip_addrs:
+                if config.MODES["classic"]:
+                    params = {"server": ip, "port": config.PORT, "secret": secret}
+                    links.append({"user": user, "mode": "classic", "link": "tg://proxy?{}".format(urllib.parse.urlencode(params, safe=':'))})
+                if config.MODES["secure"]:
+                    params = {"server": ip, "port": config.PORT, "secret": "dd" + secret}
+                    links.append({"user": user, "mode": "secure", "link": "tg://proxy?{}".format(urllib.parse.urlencode(params, safe=':'))})
+                if config.MODES["tls"]:
+                    tls_secret = "ee" + secret + config.TLS_DOMAIN.encode().hex()
+                    params = {"server": ip, "port": config.PORT, "secret": tls_secret}
+                    links.append({"user": user, "mode": "tls", "link": "tg://proxy?{}".format(urllib.parse.urlencode(params, safe=':'))})
+        return links
 
     def _load_ui_html() -> str:
         try:
@@ -2413,6 +2601,78 @@ def _create_api_app():
 
     @app.get("/health")
     def health() -> Dict[str, Any]:
+        return {"status": "ok"}
+
+    @app.get("/links")
+    def get_links() -> Any:
+        return {"links": _build_proxy_links()}
+
+    @app.post("/auth/login", response_model=LoginResponseModel)
+    def login(body: LoginRequestModel) -> Dict[str, Any]:
+        _init_config_db()
+        with _connect_config_db() as conn:
+            admin_user = _get_kv(conn, "admin_user")
+            admin_hash = _get_kv(conn, "admin_pass_hash")
+            if body.username != admin_user or not _verify_password(body.password, admin_hash):
+                raise HTTPException(status_code=401, detail="bad credentials")
+            token = _issue_token(conn)
+        return {"token": token}
+
+    @app.post("/auth/change-password")
+    def change_password(body: ChangePasswordRequestModel) -> Dict[str, Any]:
+        _init_config_db()
+        with _connect_config_db() as conn:
+            admin_hash = _get_kv(conn, "admin_pass_hash")
+            if not _verify_password(body.old_password, admin_hash):
+                raise HTTPException(status_code=401, detail="bad credentials")
+
+            new_hash = _hash_password(body.new_password)
+            _set_kv(conn, "admin_pass_hash", new_hash)
+            conn.commit()
+
+        return {"status": "ok"}
+
+    @app.get("/auth/keys", response_model=list[ApiKeyListItemModel])
+    def list_api_keys() -> Any:
+        _init_config_db()
+        with _connect_config_db() as conn:
+            rows = conn.execute(
+                "SELECT id, COALESCE(name, '') AS name, token_hash, created_at "
+                "FROM api_keys WHERE revoked = 0 ORDER BY id DESC"
+            ).fetchall()
+        return [
+            {
+                "id": int(r["id"]),
+                "name": str(r["name"]),
+                "prefix": _format_token_prefix(str(r["token_hash"])),
+                "created_at": int(r["created_at"]),
+            }
+            for r in rows
+        ]
+
+    @app.post("/auth/keys", response_model=ApiKeyCreateResponseModel)
+    def create_api_key(body: ApiKeyCreateRequestModel) -> Any:
+        _init_config_db()
+        token = secrets.token_urlsafe(32)
+        token_hash = _hash_token(token)
+        now = int(time.time())
+        with _connect_config_db() as conn:
+            cur = conn.execute(
+                "INSERT INTO api_keys(name, token_hash, created_at, revoked) VALUES(?, ?, ?, 0)",
+                (body.name or "", token_hash, now),
+            )
+            conn.commit()
+            key_id = int(cur.lastrowid)
+        return {"id": key_id, "token": token, "prefix": _format_token_prefix(token_hash)}
+
+    @app.delete("/auth/keys/{key_id}")
+    def delete_api_key(key_id: int) -> Any:
+        _init_config_db()
+        with _connect_config_db() as conn:
+            cur = conn.execute("UPDATE api_keys SET revoked = 1 WHERE id = ?", (key_id,))
+            conn.commit()
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="key not found")
         return {"status": "ok"}
 
     @app.get("/config", response_model=ConfigModel)
@@ -2513,7 +2773,13 @@ def start_config_api(loop):
         return
 
     global _api_server
-    config_uv = uvicorn.Config(app, host=API_LISTEN_HOST, port=API_LISTEN_PORT, log_level="warning")
+    config_uv = uvicorn.Config(
+        app,
+        host=API_LISTEN_HOST,
+        port=API_LISTEN_PORT,
+        log_level="warning",
+        lifespan="off",
+    )
     server = uvicorn.Server(config_uv)
     # Uvicorn installs SIGINT/SIGTERM handlers by default. This breaks Ctrl+C handling in our
     # own event loop, so disable it and manage shutdown ourselves.
