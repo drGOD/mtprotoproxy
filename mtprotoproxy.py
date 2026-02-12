@@ -119,6 +119,9 @@ API_LISTEN_PORT = int(os.environ.get("MTPROTO_API_PORT", "8080"))
 
 QUIET = os.environ.get("MTPROTO_QUIET", "").strip().lower() in ("1", "true", "yes", "on")
 
+STATS_SAMPLE_PERIOD = int(os.environ.get("MTPROTO_STATS_SAMPLE_PERIOD", "10"))
+STATS_RETENTION_HOURS = int(os.environ.get("MTPROTO_STATS_RETENTION_HOURS", "168"))
+
 ADMIN_USER_ENV = os.environ.get("MTPROTO_ADMIN_USER")
 ADMIN_PASS_ENV = os.environ.get("MTPROTO_ADMIN_PASS")
 
@@ -166,6 +169,35 @@ def _init_config_db() -> None:
                 token_hash TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 revoked INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS stats_samples (
+                ts INTEGER PRIMARY KEY,
+                uptime INTEGER NOT NULL,
+                connects_all INTEGER NOT NULL,
+                connects_bad INTEGER NOT NULL,
+                handshake_timeouts INTEGER NOT NULL,
+                curr_connects INTEGER NOT NULL,
+                octets_total INTEGER NOT NULL,
+                msgs_total INTEGER NOT NULL
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_stats_samples (
+                ts INTEGER NOT NULL,
+                user TEXT NOT NULL,
+                connects INTEGER NOT NULL,
+                curr_connects INTEGER NOT NULL,
+                octets_total INTEGER NOT NULL,
+                msgs_total INTEGER NOT NULL,
+                PRIMARY KEY (ts, user)
             )
             """
         )
@@ -221,6 +253,99 @@ def _init_config_db() -> None:
         conn.commit()
 
     _config_db_inited = True
+
+
+def _stats_snapshot_now(ts: int) -> tuple[dict, list[dict]]:
+    global stats
+    global user_stats
+    global proxy_start_time
+
+    total_octets = 0
+    total_msgs = 0
+    total_curr = 0
+    users_out: list[dict] = []
+    for user, s in user_stats.items():
+        octets = int(s.get("octets_from_client", 0)) + int(s.get("octets_to_client", 0))
+        msgs = int(s.get("msgs_from_client", 0)) + int(s.get("msgs_to_client", 0))
+        curr = int(s.get("curr_connects", 0))
+        total_octets += octets
+        total_msgs += msgs
+        total_curr += curr
+        users_out.append(
+            {
+                "user": user,
+                "connects": int(s.get("connects", 0)),
+                "curr_connects": curr,
+                "octets_total": octets,
+                "msgs_total": msgs,
+            }
+        )
+
+    users_out.sort(key=lambda r: (r["octets_total"], r["connects"]), reverse=True)
+
+    agg = {
+        "ts": ts,
+        "uptime": int(max(0, time.time() - proxy_start_time)),
+        "connects_all": int(stats.get("connects_all", 0)),
+        "connects_bad": int(stats.get("connects_bad", 0)),
+        "handshake_timeouts": int(stats.get("handshake_timeouts", 0)),
+        "curr_connects": total_curr,
+        "octets_total": total_octets,
+        "msgs_total": total_msgs,
+    }
+    return agg, users_out
+
+
+async def stats_sampler():
+    global proxy_start_time
+
+    _init_config_db()
+    cleanup_every = max(1, int(60 / max(1, STATS_SAMPLE_PERIOD)))
+    i = 0
+
+    while True:
+        await asyncio.sleep(max(1, STATS_SAMPLE_PERIOD))
+        ts = int(time.time())
+        agg, users_out = _stats_snapshot_now(ts)
+
+        try:
+            with _connect_config_db() as conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO stats_samples(ts, uptime, connects_all, connects_bad, handshake_timeouts, curr_connects, octets_total, msgs_total) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        agg["ts"],
+                        agg["uptime"],
+                        agg["connects_all"],
+                        agg["connects_bad"],
+                        agg["handshake_timeouts"],
+                        agg["curr_connects"],
+                        agg["octets_total"],
+                        agg["msgs_total"],
+                    ),
+                )
+                for u in users_out:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO user_stats_samples(ts, user, connects, curr_connects, octets_total, msgs_total) VALUES(?, ?, ?, ?, ?, ?)",
+                        (
+                            ts,
+                            u["user"],
+                            u["connects"],
+                            u["curr_connects"],
+                            u["octets_total"],
+                            u["msgs_total"],
+                        ),
+                    )
+
+                if i % cleanup_every == 0 and STATS_RETENTION_HOURS > 0:
+                    cutoff = ts - STATS_RETENTION_HOURS * 3600
+                    conn.execute("DELETE FROM user_stats_samples WHERE ts < ?", (cutoff,))
+                    conn.execute("DELETE FROM stats_samples WHERE ts < ?", (cutoff,))
+
+                conn.commit()
+        except Exception:
+            pass
+
+        i += 1
 
 
 def _hash_password(password: str, iterations: int = 200_000) -> str:
@@ -2610,6 +2735,48 @@ def _create_api_app():
     def get_links() -> Any:
         return {"links": _build_proxy_links()}
 
+    @app.get("/stats/summary")
+    def stats_summary(limit_users: int = 20) -> Any:
+        ts = int(time.time())
+        agg, users_out = _stats_snapshot_now(ts)
+        if limit_users > 0:
+            users_out = users_out[: min(int(limit_users), 200)]
+        return {"now": agg, "users": users_out}
+
+    @app.get("/stats/timeseries")
+    def stats_timeseries(minutes: int = 60, step: int = 10) -> Any:
+        minutes = max(1, int(minutes))
+        step = max(1, int(step))
+        ts_to = int(time.time())
+        ts_from = ts_to - minutes * 60
+
+        _init_config_db()
+        with _connect_config_db() as conn:
+            rows = conn.execute(
+                "SELECT ts, connects_all, connects_bad, handshake_timeouts, curr_connects, octets_total, msgs_total FROM stats_samples WHERE ts >= ? AND ts <= ? ORDER BY ts ASC",
+                (ts_from, ts_to),
+            ).fetchall()
+
+        series = []
+        last_emit = None
+        for r in rows:
+            ts = int(r["ts"])
+            if last_emit is None or ts - last_emit >= step:
+                series.append(
+                    {
+                        "ts": ts,
+                        "connects_all": int(r["connects_all"]),
+                        "connects_bad": int(r["connects_bad"]),
+                        "handshake_timeouts": int(r["handshake_timeouts"]),
+                        "curr_connects": int(r["curr_connects"]),
+                        "octets_total": int(r["octets_total"]),
+                        "msgs_total": int(r["msgs_total"]),
+                    }
+                )
+                last_emit = ts
+
+        return {"from": ts_from, "to": ts_to, "step": step, "series": series}
+
     @app.post("/auth/login", response_model=LoginResponseModel)
     def login(body: LoginRequestModel) -> Dict[str, Any]:
         _init_config_db()
@@ -2906,6 +3073,9 @@ def create_utilitary_tasks(loop):
 
     stats_printer_task = asyncio.Task(stats_printer(), loop=loop)
     tasks.append(stats_printer_task)
+
+    stats_sampler_task = asyncio.Task(stats_sampler(), loop=loop)
+    tasks.append(stats_sampler_task)
 
     if config.USE_MIDDLE_PROXY:
         middle_proxy_updater_task = asyncio.Task(update_middle_proxy_info(), loop=loop)

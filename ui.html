@@ -31,7 +31,12 @@
     h1 { font-size: 18px; margin: 0; letter-spacing: 0.2px; }
     .sub { color: var(--muted); font-size: 13px; }
     .grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
-    @media (min-width: 900px) { .grid { grid-template-columns: 1.2fr 0.8fr; } }
+    @media (min-width: 900px) {
+      .grid { grid-template-columns: repeat(12, 1fr); }
+      .span-4 { grid-column: span 4; }
+      .span-8 { grid-column: span 8; }
+      .span-12 { grid-column: span 12; }
+    }
     .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; box-shadow: var(--shadow); }
     .card h2 { font-size: 14px; margin: 0 0 10px 0; color: var(--text); }
     .row { display: grid; grid-template-columns: 1fr; gap: 10px; }
@@ -95,6 +100,13 @@
     .top-actions { display: flex; gap: 10px; align-items: center; }
     .login-wrap { max-width: 520px; margin: 16px auto 0 auto; }
     .divider { height: 1px; background: var(--border); margin: 12px 0; }
+    .kpis { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 10px; }
+    @media (min-width: 600px) { .kpis { grid-template-columns: 1fr 1fr 1fr; } }
+    .kpi { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; background: #f8fafc; }
+    .kpi .t { font-size: 12px; color: var(--muted); }
+    .kpi .v { font-size: 16px; font-weight: 700; margin-top: 4px; }
+    .spark { width: 100%; height: 120px; border: 1px solid var(--border); border-radius: 12px; background: #ffffff; overflow: hidden; }
+    .spark svg { width: 100%; height: 120px; display: block; }
     .modal-backdrop {
       position: fixed;
       inset: 0;
@@ -173,7 +185,7 @@
   </div>
 
   <div v-else class="grid">
-    <section class="card">
+    <section class="card span-8">
       <h2>Конфигурация</h2>
 
       <div class="row2">
@@ -217,7 +229,24 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="card span-4">
+      <h2>Админ аккаунт</h2>
+      <div class="row2">
+        <div>
+          <label>Старый пароль</label>
+          <input type="password" v-model.trim="pw.old" autocomplete="current-password" />
+        </div>
+        <div>
+          <label>Новый пароль</label>
+          <input type="password" v-model.trim="pw.new" autocomplete="new-password" />
+        </div>
+      </div>
+      <div class="actions">
+        <button class="primary" @click="changePassword" :disabled="busy || !pw.old || !pw.new">Сменить пароль</button>
+      </div>
+    </section>
+
+    <section class="card span-8">
       <h2>Пользователи (USERS)</h2>
 
       <div class="row">
@@ -278,24 +307,7 @@
       </div>
     </section>
 
-    <section class="card">
-      <h2>Админ аккаунт</h2>
-      <div class="row2">
-        <div>
-          <label>Старый пароль</label>
-          <input type="password" v-model.trim="pw.old" autocomplete="current-password" />
-        </div>
-        <div>
-          <label>Новый пароль</label>
-          <input type="password" v-model.trim="pw.new" autocomplete="new-password" />
-        </div>
-      </div>
-      <div class="actions">
-        <button class="primary" @click="changePassword" :disabled="busy || !pw.old || !pw.new">Сменить пароль</button>
-      </div>
-    </section>
-
-    <section class="card">
+    <section class="card span-4">
       <h2>API ключи</h2>
 
       <div class="row2">
@@ -340,6 +352,80 @@
 
       <div class="actions" style="margin-top:10px;">
         <button @click="loadKeys" :disabled="busy">Обновить список</button>
+      </div>
+    </section>
+
+    <section class="card span-12">
+      <h2>Мониторинг</h2>
+
+      <div class="row2">
+        <div>
+          <label>Окно</label>
+          <select v-model.number="mon.windowMin" style="width:100%; padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:#fff;">
+            <option :value="15">15 минут</option>
+            <option :value="60">1 час</option>
+            <option :value="360">6 часов</option>
+            <option :value="1440">24 часа</option>
+          </select>
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button @click="loadMonitoring" :disabled="busy">Обновить</button>
+        </div>
+      </div>
+
+      <div class="kpis" v-if="mon.summary.now">
+        <div class="kpi">
+          <div class="t">Uptime</div>
+          <div class="v mono">{{ fmtDur(mon.summary.now.uptime) }}</div>
+        </div>
+        <div class="kpi">
+          <div class="t">Текущие соединения</div>
+          <div class="v mono">{{ mon.summary.now.curr_connects }}</div>
+        </div>
+        <div class="kpi">
+          <div class="t">Всего трафика</div>
+          <div class="v mono">{{ fmtBytes(mon.summary.now.octets_total) }}</div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px;" v-if="mon.series.length">
+        <div>
+          <label>Трафик (накопительно)</label>
+          <div class="spark" v-html="sparkSvg(mon.series.map(p => p.octets_total), 'bytes')"></div>
+        </div>
+        <div style="margin-top:10px;">
+          <label>Текущие соединения</label>
+          <div class="spark" v-html="sparkSvg(mon.series.map(p => p.curr_connects), 'count')"></div>
+        </div>
+      </div>
+
+      <div style="margin-top:12px;" v-if="(mon.summary.users || []).length">
+        <label>Топ пользователей по трафику</label>
+        <table style="margin-top:6px;">
+          <thead>
+            <tr>
+              <th>Пользователь</th>
+              <th class="right">Трафик</th>
+              <th class="right">Сообщения</th>
+              <th class="right">Connects</th>
+              <th class="right">Current</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="u in mon.summary.users" :key="u.user">
+              <td class="mono">{{ u.user }}</td>
+              <td class="right mono">{{ fmtBytes(u.octets_total) }}</td>
+              <td class="right mono">{{ u.msgs_total }}</td>
+              <td class="right mono">{{ u.connects }}</td>
+              <td class="right mono">{{ u.curr_connects }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note" style="margin-top:10px;">
+        Данные берутся из встроенного API: <code class="mono">/stats/summary</code> и <code class="mono">/stats/timeseries</code>.
       </div>
     </section>
   </div>
@@ -409,7 +495,12 @@ createApp({
       createdKey: { token: "" }
       ,
       links: [],
-      qrModal: { open: false, user: "", mode: "secure" }
+      qrModal: { open: false, user: "", mode: "secure" },
+      mon: {
+        windowMin: 60,
+        summary: { now: null, users: [] },
+        series: []
+      }
     }
   },
   computed: {
@@ -692,12 +783,72 @@ createApp({
       } finally {
         this.busy = false
       }
+    },
+    fmtBytes(n) {
+      const v = Number(n || 0)
+      const kb = 1024
+      const mb = kb * 1024
+      const gb = mb * 1024
+      if (v >= gb) return (v / gb).toFixed(2) + " GB"
+      if (v >= mb) return (v / mb).toFixed(2) + " MB"
+      if (v >= kb) return (v / kb).toFixed(2) + " KB"
+      return String(Math.floor(v)) + " B"
+    },
+    fmtDur(sec) {
+      let s = Math.max(0, Number(sec || 0))
+      const d = Math.floor(s / 86400); s -= d * 86400
+      const h = Math.floor(s / 3600); s -= h * 3600
+      const m = Math.floor(s / 60); s -= m * 60
+      const parts = []
+      if (d) parts.push(d + "d")
+      if (h || parts.length) parts.push(h + "h")
+      if (m || parts.length) parts.push(m + "m")
+      parts.push(Math.floor(s) + "s")
+      return parts.join(" ")
+    },
+    sparkSvg(values, kind) {
+      const arr = (values || []).map((x) => Number(x || 0))
+      if (!arr.length) return ""
+      const w = 600, h = 120, pad = 10
+      let min = Math.min(...arr)
+      let max = Math.max(...arr)
+      if (min === max) { max = min + 1 }
+      const scaleX = (i) => pad + (i * (w - pad * 2)) / Math.max(1, arr.length - 1)
+      const scaleY = (v) => h - pad - ((v - min) * (h - pad * 2)) / (max - min)
+      let d = ""
+      for (let i = 0; i < arr.length; i++) {
+        const x = scaleX(i)
+        const y = scaleY(arr[i])
+        d += (i === 0 ? "M" : "L") + x.toFixed(1) + "," + y.toFixed(1)
+      }
+      const last = arr[arr.length - 1]
+      const label = (kind === "bytes") ? this.fmtBytes(last) : String(Math.floor(last))
+      return `
+        <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="${d}" fill="none" stroke="rgba(37,99,235,0.9)" stroke-width="2" />
+          <text x="${pad}" y="${pad+12}" font-size="12" fill="rgba(100,116,139,1)" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace">${label}</text>
+        </svg>
+      `.trim()
+    },
+    async loadMonitoring() {
+      const windowMin = Number(this.mon.windowMin || 60)
+      const step = windowMin <= 60 ? 10 : (windowMin <= 360 ? 30 : 60)
+      const [summary, ts] = await Promise.all([
+        this.apiFetch("/stats/summary?limit_users=20"),
+        this.apiFetch(`/stats/timeseries?minutes=${encodeURIComponent(windowMin)}&step=${encodeURIComponent(step)}`)
+      ])
+      this.mon.summary = summary
+      this.mon.series = (ts && ts.series) ? ts.series : []
     }
   },
-  mounted() {
+  async mounted() {
     this.setStatus("", "")
     try { this.token = localStorage.getItem("mtproxy_token") || "" } catch (e) {}
-    if (this.token) this.refresh()
+    if (this.token) {
+      await this.refresh()
+      await this.loadKeys()
+      await this.loadMonitoring()
+    }
   }
 }).mount('#app')
 </script>
