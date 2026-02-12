@@ -23,6 +23,42 @@ import sqlite3
 from typing import Any, Dict
 import secrets
 
+
+def _load_dotenv(path: str = ".env") -> None:
+    try:
+        if not os.path.exists(path):
+            return
+        with open(path, "r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                key = k.strip()
+                if not key:
+                    continue
+                val = v.strip()
+                if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+                    val = val[1:-1]
+                if key not in os.environ:
+                    os.environ[key] = val
+    except Exception:
+        return
+
+
+_load_dotenv()
+
+try:
+    from utils.email_sender import EmailSender
+    from utils.telegram_bot import TelegramBotApi, parse_start_payload, backoff_sleep
+except Exception:  # pragma: no cover
+    EmailSender = None
+    TelegramBotApi = None
+    parse_start_payload = None
+    backoff_sleep = None
+
 try:
     import uvicorn
     from fastapi import FastAPI, HTTPException, Request
@@ -72,6 +108,10 @@ PROXY_SECRET = bytes.fromhex(
     "54c490b079e31bef82ff0ee8f2b0a32756d249c5f21269816cb7061b265db212"
 )
 
+TG_BOT_TOKEN = os.environ.get("MTPROTO_TG_BOT_TOKEN", "").strip()
+TG_BOT_USERNAME = os.environ.get("MTPROTO_TG_BOT_USERNAME", "").strip()
+TG_BOT_POLL = os.environ.get("MTPROTO_TG_BOT_POLL", "").strip().lower() in ("1", "true", "yes", "on")
+
 SKIP_LEN = 8
 PREKEY_LEN = 32
 KEY_LEN = 32
@@ -117,6 +157,14 @@ CONFIG_DB_PATH = os.environ.get("MTPROTO_CONFIG_DB", "./config.db")
 API_LISTEN_HOST = os.environ.get("MTPROTO_API_HOST", "127.0.0.1")
 API_LISTEN_PORT = int(os.environ.get("MTPROTO_API_PORT", "8080"))
 
+CLIENT_PUBLIC_BASE_URL = os.environ.get("MTPROTO_PUBLIC_BASE_URL", "").strip()
+CLIENT_DEV_ISSUE_LINKS = os.environ.get("MTPROTO_DEV_ISSUE_LINKS", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+
 QUIET = os.environ.get("MTPROTO_QUIET", "").strip().lower() in ("1", "true", "yes", "on")
 
 STATS_SAMPLE_PERIOD = int(os.environ.get("MTPROTO_STATS_SAMPLE_PERIOD", "10"))
@@ -151,6 +199,17 @@ def _init_config_db() -> None:
             )
             """
         )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS client_tg_link_tokens (
+                token_hash TEXT PRIMARY KEY,
+                client_id INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -160,6 +219,86 @@ def _init_config_db() -> None:
             )
             """
         )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS clients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT,
+                tg_username TEXT,
+                tg_chat_id TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_email ON clients(email)")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_tg_username ON clients(tg_username)")
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS client_sessions (
+                token_hash TEXT PRIMARY KEY,
+                client_id INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS client_login_tokens (
+                token_hash TEXT PRIMARY KEY,
+                client_id INTEGER NOT NULL,
+                channel TEXT NOT NULL,
+                expires_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS client_login_tg_messages (
+                token_hash TEXT PRIMARY KEY,
+                chat_id TEXT NOT NULL,
+                message_id INTEGER NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS proxy_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id INTEGER NOT NULL,
+                account_id INTEGER,
+                plan TEXT NOT NULL,
+                status TEXT NOT NULL,
+                starts_at INTEGER,
+                ends_at INTEGER,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_proxy_subscriptions_client ON proxy_subscriptions(client_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_proxy_subscriptions_account ON proxy_subscriptions(account_id)")
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS client_proxy_accounts2 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id INTEGER NOT NULL,
+                proxy_user TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_client_proxy_accounts2_client ON client_proxy_accounts2(client_id)")
 
         conn.execute(
             """
@@ -346,7 +485,200 @@ async def stats_sampler():
         except Exception:
             pass
 
-        i += 1
+
+async def telegram_bot_poller():
+    if not TG_BOT_TOKEN or TelegramBotApi is None:
+        return
+    bot = TelegramBotApi(TG_BOT_TOKEN)
+    offset = None
+    backoff = 1.0
+
+    def _bot_base_url() -> str:
+        if CLIENT_PUBLIC_BASE_URL:
+            return CLIENT_PUBLIC_BASE_URL.rstrip("/")
+        return f"http://{API_LISTEN_HOST}:{API_LISTEN_PORT}"
+
+    def _issue_login_token_db(conn: sqlite3.Connection, client_id: int) -> str:
+        token = secrets.token_urlsafe(32)
+        token_hash = _hash_token(token)
+        now = _now_ts()
+        exp = now + 15 * 60
+        conn.execute(
+            "INSERT OR REPLACE INTO client_login_tokens(token_hash, client_id, channel, expires_at, created_at) VALUES(?, ?, ?, ?, ?)",
+            (token_hash, int(client_id), "telegram", exp, now),
+        )
+        return token
+
+    def _reply_markup_new_link(client_id: int) -> dict:
+        return {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "Получить новую ссылку для входа",
+                        "callback_data": f"new_login:{int(client_id)}",
+                    }
+                ]
+            ]
+        }
+
+    def _send_login_link_and_track(chat_id: str, client_id: int) -> None:
+        _init_config_db()
+        with _connect_config_db() as conn:
+            token = _issue_login_token_db(conn, client_id)
+            link = f"{_bot_base_url()}/client/auth/confirm?token={urllib.parse.quote(token)}"
+            msg_id = bot.send_message(
+                chat_id,
+                f"Ссылка для входа (одноразовая):\n{link}",
+                reply_markup=_reply_markup_new_link(client_id),
+            )
+            if msg_id:
+                conn.execute(
+                    "INSERT OR REPLACE INTO client_login_tg_messages(token_hash, chat_id, message_id, created_at) VALUES(?, ?, ?, ?)",
+                    (_hash_token(token), str(chat_id), int(msg_id), _now_ts()),
+                )
+            conn.commit()
+
+    async def _to_thread(func, *args, **kwargs):
+        try:
+            return await asyncio.to_thread(func, *args, **kwargs)
+        except AttributeError:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
+
+    while True:
+        try:
+            updates = await _to_thread(bot.get_updates, offset=offset, timeout=25)
+            if updates:
+                backoff = 1.0
+            for u in updates:
+                try:
+                    upd_id = int(u.get("update_id"))
+                    offset = upd_id + 1
+                    if u.get("message"):
+                        msg = u.get("message") or {}
+                        text = msg.get("text") or ""
+                        payload = parse_start_payload(text) if parse_start_payload else ""
+                        if not payload:
+                            continue
+                        chat = msg.get("chat") or {}
+                        chat_id = str(chat.get("id") or "")
+                        if not chat_id:
+                            continue
+                        token_hash = _hash_token(payload)
+                        now = _now_ts()
+                        _init_config_db()
+                        with _connect_config_db() as conn:
+                            row = conn.execute(
+                                "SELECT client_id, expires_at FROM client_tg_link_tokens WHERE token_hash = ?",
+                                (token_hash,),
+                            ).fetchone()
+                            if not row:
+                                continue
+                            if int(row["expires_at"]) <= now:
+                                conn.execute("DELETE FROM client_tg_link_tokens WHERE token_hash = ?", (token_hash,))
+                                conn.commit()
+                                continue
+                            client_id = int(row["client_id"])
+                            conn.execute("DELETE FROM client_tg_link_tokens WHERE token_hash = ?", (token_hash,))
+                            conn.execute(
+                                "UPDATE clients SET tg_chat_id = ?, updated_at = ? WHERE id = ?",
+                                (chat_id, now, client_id),
+                            )
+                            conn.commit()
+                            try:
+                                await _to_thread(
+                                    bot.send_message,
+                                    chat_id,
+                                    "Telegram привязан. Сейчас пришлю ссылку для входа.",
+                                    True,
+                                    _tg_reply_markup_new_login(client_id),
+                                )
+                            except Exception:
+                                pass
+                            try:
+                                await _to_thread(_send_login_link_and_track, chat_id, client_id)
+                            except Exception:
+                                pass
+
+                    if u.get("callback_query"):
+                        cq = u.get("callback_query") or {}
+                        cq_id = str(cq.get("id") or "")
+                        data = str(cq.get("data") or "")
+                        msg = cq.get("message") or {}
+                        chat = msg.get("chat") or {}
+                        chat_id = str(chat.get("id") or "")
+                        if not cq_id or not chat_id or not data:
+                            continue
+                        if data.startswith("new_login:"):
+                            try:
+                                client_id = int(data.split(":", 1)[1])
+                            except Exception:
+                                client_id = 0
+                            if client_id <= 0:
+                                continue
+                            _init_config_db()
+                            with _connect_config_db() as conn:
+                                row = conn.execute(
+                                    "SELECT COALESCE(tg_chat_id, '') AS tg_chat_id FROM clients WHERE id = ?",
+                                    (int(client_id),),
+                                ).fetchone()
+                                if not row or str(row["tg_chat_id"]) != str(chat_id):
+                                    try:
+                                        await _to_thread(bot.answer_callback_query, cq_id, "Недоступно")
+                                    except Exception:
+                                        pass
+                                    continue
+                                try:
+                                    await _to_thread(_send_login_link_and_track, chat_id, client_id)
+                                    await _to_thread(bot.answer_callback_query, cq_id, "Отправил")
+                                except Exception:
+                                    try:
+                                        await _to_thread(bot.answer_callback_query, cq_id, "Ошибка")
+                                    except Exception:
+                                        pass
+                except Exception:
+                    continue
+        except Exception:
+            await asyncio.sleep(backoff)
+            backoff = min(30.0, backoff * 2.0)
+
+
+async def client_subscription_watcher():
+    while True:
+        await asyncio.sleep(60)
+        try:
+            _init_config_db()
+            now = _now_ts()
+            with _connect_config_db() as conn:
+                rows = conn.execute(
+                    "SELECT id, client_id, account_id FROM proxy_subscriptions WHERE status = 'active' AND ends_at IS NOT NULL AND ends_at <= ?",
+                    (now,),
+                ).fetchall()
+                for r in rows:
+                    sub_id = int(r["id"])
+                    account_id = int(r["account_id"]) if r["account_id"] is not None else 0
+                    conn.execute(
+                        "UPDATE proxy_subscriptions SET status = 'expired', updated_at = ? WHERE id = ?",
+                        (now, sub_id),
+                    )
+
+                    if account_id > 0:
+                        row_acc = conn.execute(
+                            "SELECT proxy_user FROM client_proxy_accounts2 WHERE id = ?",
+                            (account_id,),
+                        ).fetchone()
+                        if row_acc:
+                            conn.execute("DELETE FROM users WHERE name = ?", (str(row_acc["proxy_user"]),))
+                        conn.execute("DELETE FROM client_proxy_accounts2 WHERE id = ?", (account_id,))
+
+                if rows:
+                    conn.commit()
+
+            if rows:
+                reload_config_internal()
+                _ensure_port_is_static()
+        except Exception:
+            pass
 
 
 def _hash_password(password: str, iterations: int = 200_000) -> str:
@@ -395,8 +727,181 @@ def _get_active_token(conn: sqlite3.Connection) -> str:
         return ""
 
 
+def _client_issue_tg_link_token(conn: sqlite3.Connection, client_id: int) -> str:
+    token = secrets.token_urlsafe(16)
+    token_hash = _hash_token(token)
+    now = _now_ts()
+    exp = now + 30 * 60
+    conn.execute(
+        "INSERT OR REPLACE INTO client_tg_link_tokens(token_hash, client_id, expires_at, created_at) VALUES(?, ?, ?, ?)",
+        (token_hash, client_id, exp, now),
+    )
+    return token
+
+
+def _get_email_sender() -> Any:
+    if EmailSender is None:
+        return None
+    try:
+        return EmailSender.from_env()
+    except Exception:
+        return None
+
+
+def _get_tg_bot() -> Any:
+    if not TG_BOT_TOKEN or TelegramBotApi is None:
+        return None
+    try:
+        return TelegramBotApi(TG_BOT_TOKEN)
+    except Exception:
+        return None
+
+
+def _format_proxy_message(links: list[dict]) -> str:
+    if not links:
+        return ""
+    lines = ["Твой прокси:"]
+    for l in links:
+        mode = l.get("mode")
+        link = l.get("link")
+        if mode and link:
+            lines.append(f"{mode}: {link}")
+    return "\n".join(lines)
+
+
+def _tg_reply_markup_new_login(client_id: int) -> dict:
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "Получить новую ссылку для входа",
+                    "callback_data": f"new_login:{int(client_id)}",
+                }
+            ]
+        ]
+    }
+
+
+def _client_notify_login_link(conn: sqlite3.Connection, client_id: int, link: str) -> dict:
+    info = {"email": "", "telegram": ""}
+    row = conn.execute(
+        "SELECT COALESCE(email, '') AS email, COALESCE(tg_chat_id, '') AS tg_chat_id FROM clients WHERE id = ?",
+        (client_id,),
+    ).fetchone()
+    if not row:
+        return info
+
+    email = str(row["email"])
+    tg_chat_id = str(row["tg_chat_id"])
+    if email:
+        sender = _get_email_sender()
+        if sender and link:
+            try:
+                sender.send_text(email, "Вход в прокси", f"Ссылка для входа:\n{link}\n")
+                info["email"] = "sent"
+            except Exception:
+                info["email"] = "failed"
+    if tg_chat_id:
+        bot = _get_tg_bot()
+        if bot and link:
+            try:
+                msg_id = bot.send_message(
+                    tg_chat_id,
+                    f"Ссылка для входа (одноразовая):\n{link}",
+                    reply_markup=_tg_reply_markup_new_login(client_id),
+                )
+                if msg_id:
+                    try:
+                        token_hash = _hash_token(urllib.parse.parse_qs(urllib.parse.urlparse(link).query).get("token", [""])[0])
+                    except Exception:
+                        token_hash = ""
+                    if token_hash:
+                        conn.execute(
+                            "INSERT OR REPLACE INTO client_login_tg_messages(token_hash, chat_id, message_id, created_at) VALUES(?, ?, ?, ?)",
+                            (token_hash, str(tg_chat_id), int(msg_id), _now_ts()),
+                        )
+                info["telegram"] = "sent"
+            except Exception:
+                info["telegram"] = "failed"
+    return info
+
+
+def _client_notify_proxy(conn: sqlite3.Connection, client_id: int, links: list[dict]) -> dict:
+    info = {"email": "", "telegram": ""}
+    text = _format_proxy_message(links)
+    if not text:
+        return info
+    row = conn.execute(
+        "SELECT COALESCE(email, '') AS email, COALESCE(tg_chat_id, '') AS tg_chat_id FROM clients WHERE id = ?",
+        (client_id,),
+    ).fetchone()
+    if not row:
+        return info
+    email = str(row["email"])
+    tg_chat_id = str(row["tg_chat_id"])
+    if email:
+        sender = _get_email_sender()
+        if sender:
+            try:
+                sender.send_text(email, "Данные прокси", text)
+                info["email"] = "sent"
+            except Exception:
+                info["email"] = "failed"
+    if tg_chat_id:
+        bot = _get_tg_bot()
+        if bot and text:
+            try:
+                bot.send_message(tg_chat_id, text, reply_markup=_tg_reply_markup_new_login(client_id))
+                info["telegram"] = "sent"
+            except Exception:
+                info["telegram"] = "failed"
+    return info
+
+
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _now_ts() -> int:
+    return int(time.time())
+
+
+def _get_client_base_url(request: "Request") -> str:
+    if CLIENT_PUBLIC_BASE_URL:
+        return CLIENT_PUBLIC_BASE_URL.rstrip("/")
+    try:
+        return str(request.base_url).rstrip("/")
+    except Exception:
+        return ""
+
+
+def _random_secret_hex32() -> str:
+    return secrets.token_hex(16)
+
+
+def _sanitize_email(email: str) -> str:
+    return (email or "").strip().lower()
+
+
+def _sanitize_tg_username(username: str) -> str:
+    u = (username or "").strip()
+    if u.startswith("@"):  # user may input @name
+        u = u[1:]
+    return u.lower()
+
+
+def _tg_username_clean(u: str) -> str:
+    s = (u or "").strip()
+    if s.startswith("@"): 
+        s = s[1:]
+    return s
+
+
+def _tg_start_link(token: str) -> str:
+    bot = _tg_username_clean(TG_BOT_USERNAME)
+    if not bot:
+        return ""
+    return f"https://t.me/{bot}?start={urllib.parse.quote(str(token))}"
 
 
 def _format_token_prefix(token_hash: str) -> str:
@@ -2648,7 +3153,7 @@ def _create_api_app():
 
     app = FastAPI(title="mtprotoproxy")
 
-    public_paths = {"/", "/ui", "/health", "/auth/login", "/favicon.ico"}
+    public_paths = {"/", "/ui", "/health", "/auth/login", "/favicon.ico", "/client", "/client/"}
 
     def _auth_error(status_code: int, detail: str):
         try:
@@ -2660,6 +3165,8 @@ def _create_api_app():
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
         path = request.url.path
+        if path.startswith("/client"):
+            return await call_next(request)
         if path in public_paths:
             return await call_next(request)
 
@@ -2714,6 +3221,15 @@ def _create_api_app():
         except OSError:
             raise HTTPException(status_code=404, detail="ui.html not found")
 
+    def _load_client_html() -> str:
+        try:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            ui_path = os.path.join(base_dir, "client.html")
+            with open(ui_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            raise HTTPException(status_code=404, detail="client.html not found")
+
     @app.get("/")
     @app.get("/ui")
     def ui() -> Any:
@@ -2722,6 +3238,487 @@ def _create_api_app():
         except Exception:
             raise HTTPException(status_code=500, detail="FastAPI HTMLResponse unavailable")
         return HTMLResponse(_load_ui_html())
+
+    @app.get("/client")
+    @app.get("/client/")
+    def client_ui() -> Any:
+        try:
+            from fastapi.responses import HTMLResponse
+        except Exception:
+            raise HTTPException(status_code=500, detail="FastAPI HTMLResponse unavailable")
+        return HTMLResponse(_load_client_html())
+
+    class ClientAuthStartModel(BaseModel):
+        plan: str
+        email: str = ""
+        tg_username: str = ""
+
+    class ClientAuthStartResponseModel(BaseModel):
+        status: str
+        dev_link: str = ""
+        tg_start_url: str = ""
+        tg_bot: str = ""
+        delivery: dict = {}
+
+    class ClientMeResponseModel(BaseModel):
+        status: str
+        client: dict
+        orders: list
+        proxy: dict
+
+    def _plan_to_seconds(plan: str) -> int:
+        p = (plan or "").strip().lower()
+        if p in ("week", "7d", "7", "неделя"):
+            return 7 * 24 * 3600
+        if p in ("month", "30d", "30", "месяц"):
+            return 30 * 24 * 3600
+        if p in ("year", "365d", "365", "год"):
+            return 365 * 24 * 3600
+        raise HTTPException(status_code=400, detail="unknown plan")
+
+    def _plan_normalize(plan: str) -> str:
+        p = (plan or "").strip().lower()
+        if p in ("week", "7d", "7", "неделя"):
+            return "week"
+        if p in ("month", "30d", "30", "месяц"):
+            return "month"
+        if p in ("year", "365d", "365", "год"):
+            return "year"
+        raise HTTPException(status_code=400, detail="unknown plan")
+
+    def _create_or_get_client(conn: sqlite3.Connection, email: str, tg_username: str) -> int:
+        email_n = _sanitize_email(email)
+        tg_n = _sanitize_tg_username(tg_username)
+        if not email_n and not tg_n:
+            raise HTTPException(status_code=400, detail="email or tg_username required")
+
+        row = None
+        if email_n:
+            row = conn.execute("SELECT id FROM clients WHERE email = ?", (email_n,)).fetchone()
+        if not row and tg_n:
+            row = conn.execute("SELECT id FROM clients WHERE tg_username = ?", (tg_n,)).fetchone()
+        now = _now_ts()
+        if row:
+            client_id = int(row["id"])
+            conn.execute("UPDATE clients SET updated_at = ? WHERE id = ?", (now, client_id))
+            if email_n:
+                conn.execute("UPDATE clients SET email = ? WHERE id = ?", (email_n, client_id))
+            if tg_n:
+                conn.execute("UPDATE clients SET tg_username = ? WHERE id = ?", (tg_n, client_id))
+            return client_id
+
+        cur = conn.execute(
+            "INSERT INTO clients(email, tg_username, tg_chat_id, created_at, updated_at) VALUES(?, ?, ?, ?, ?)",
+            (email_n or None, tg_n or None, None, now, now),
+        )
+        return int(cur.lastrowid)
+
+    def _client_issue_login_token(conn: sqlite3.Connection, client_id: int, channel: str) -> str:
+        token = secrets.token_urlsafe(32)
+        token_hash = _hash_token(token)
+        now = _now_ts()
+        exp = now + 15 * 60
+        conn.execute(
+            "INSERT OR REPLACE INTO client_login_tokens(token_hash, client_id, channel, expires_at, created_at) VALUES(?, ?, ?, ?, ?)",
+            (token_hash, client_id, channel, exp, now),
+        )
+        return token
+
+    def _client_create_session(conn: sqlite3.Connection, client_id: int) -> str:
+        token = secrets.token_urlsafe(32)
+        token_hash = _hash_token(token)
+        now = _now_ts()
+        exp = now + 7 * 24 * 3600
+        conn.execute(
+            "INSERT OR REPLACE INTO client_sessions(token_hash, client_id, expires_at, created_at) VALUES(?, ?, ?, ?)",
+            (token_hash, client_id, exp, now),
+        )
+        return token
+
+    def _client_from_session(conn: sqlite3.Connection, request: Request) -> int:
+        token = request.cookies.get("mtclient") or ""
+        if not token:
+            raise HTTPException(status_code=401, detail="missing client session")
+        token_hash = _hash_token(token)
+        now = _now_ts()
+        row = conn.execute(
+            "SELECT client_id, expires_at FROM client_sessions WHERE token_hash = ?",
+            (token_hash,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=401, detail="invalid client session")
+        if int(row["expires_at"]) <= now:
+            conn.execute("DELETE FROM client_sessions WHERE token_hash = ?", (token_hash,))
+            raise HTTPException(status_code=401, detail="client session expired")
+        return int(row["client_id"])
+
+    def _subscription_for_account(conn: sqlite3.Connection, client_id: int, account_id: int) -> dict:
+        row = conn.execute(
+            "SELECT id, plan, status, starts_at, ends_at FROM proxy_subscriptions WHERE client_id = ? AND account_id = ? ORDER BY id DESC LIMIT 1",
+            (int(client_id), int(account_id)),
+        ).fetchone()
+        if not row:
+            return {"status": "none"}
+        return {
+            "id": int(row["id"]),
+            "plan": str(row["plan"]),
+            "status": str(row["status"]),
+            "starts_at": int(row["starts_at"]) if row["starts_at"] is not None else None,
+            "ends_at": int(row["ends_at"]) if row["ends_at"] is not None else None,
+        }
+
+    def _ensure_active_subscription(conn: sqlite3.Connection, client_id: int, account_id: int) -> dict:
+        sub = _subscription_for_account(conn, client_id, account_id)
+        if sub.get("status") != "active":
+            raise HTTPException(status_code=402, detail="subscription not active")
+        now = _now_ts()
+        ends_at = sub.get("ends_at")
+        if ends_at is not None and int(ends_at) <= now:
+            raise HTTPException(status_code=402, detail="subscription expired")
+        return sub
+
+    def _create_proxy_account(conn: sqlite3.Connection, client_id: int) -> dict:
+        now = _now_ts()
+        suffix = secrets.token_hex(3)
+        proxy_user = f"c{client_id}_{suffix}"
+        secret_hex = _random_secret_hex32()
+        conn.execute(
+            "INSERT INTO users(name, secret, updated_at) VALUES(?, ?, ?)",
+            (proxy_user, secret_hex, now),
+        )
+        cur = conn.execute(
+            "INSERT INTO client_proxy_accounts2(client_id, proxy_user, created_at, updated_at) VALUES(?, ?, ?, ?)",
+            (client_id, proxy_user, now, now),
+        )
+        acc_id = int(cur.lastrowid)
+        conn.commit()
+        reload_config_internal()
+        _ensure_port_is_static()
+        links = [l for l in _build_proxy_links() if l.get("user") == proxy_user]
+        return {"id": acc_id, "proxy_user": proxy_user, "secret": secret_hex, "links": links}
+
+    def _delete_proxy_account(conn: sqlite3.Connection, client_id: int, account_id: int) -> None:
+        row = conn.execute(
+            "SELECT proxy_user FROM client_proxy_accounts2 WHERE id = ? AND client_id = ?",
+            (int(account_id), int(client_id)),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="proxy account not found")
+        proxy_user = str(row["proxy_user"])
+        conn.execute("DELETE FROM users WHERE name = ?", (proxy_user,))
+        conn.execute("DELETE FROM client_proxy_accounts2 WHERE id = ? AND client_id = ?", (int(account_id), int(client_id)))
+        conn.execute("DELETE FROM proxy_subscriptions WHERE account_id = ? AND client_id = ?", (int(account_id), int(client_id)))
+        conn.commit()
+        reload_config_internal()
+        _ensure_port_is_static()
+
+    def _recreate_proxy_account(conn: sqlite3.Connection, client_id: int, account_id: int) -> dict:
+        row = conn.execute(
+            "SELECT proxy_user FROM client_proxy_accounts2 WHERE id = ? AND client_id = ?",
+            (int(account_id), int(client_id)),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="proxy account not found")
+        proxy_user = str(row["proxy_user"])
+        now = _now_ts()
+        secret_hex = _random_secret_hex32()
+        conn.execute(
+            "UPDATE users SET secret = ?, updated_at = ? WHERE name = ?",
+            (secret_hex, now, proxy_user),
+        )
+        conn.execute(
+            "UPDATE client_proxy_accounts2 SET updated_at = ? WHERE id = ? AND client_id = ?",
+            (now, int(account_id), int(client_id)),
+        )
+        conn.commit()
+        reload_config_internal()
+        _ensure_port_is_static()
+        links = [l for l in _build_proxy_links() if l.get("user") == proxy_user]
+        return {"id": int(account_id), "proxy_user": proxy_user, "secret": secret_hex, "links": links}
+
+    def _list_proxy_accounts(conn: sqlite3.Connection, client_id: int) -> list[dict]:
+        rows = conn.execute(
+            "SELECT id, proxy_user FROM client_proxy_accounts2 WHERE client_id = ? ORDER BY id ASC",
+            (int(client_id),),
+        ).fetchall()
+        out: list[dict] = []
+        for r in rows:
+            proxy_user = str(r["proxy_user"])
+            links = [l for l in _build_proxy_links() if l.get("user") == proxy_user]
+            sub = _subscription_for_account(conn, int(client_id), int(r["id"]))
+            out.append({"id": int(r["id"]), "proxy_user": proxy_user, "links": links, "subscription": sub})
+        return out
+
+    def _list_pending_orders(conn: sqlite3.Connection, client_id: int) -> list[dict]:
+        rows = conn.execute(
+            "SELECT id, plan, status, created_at FROM proxy_subscriptions WHERE client_id = ? AND account_id IS NULL AND status = 'pending' ORDER BY id DESC",
+            (int(client_id),),
+        ).fetchall()
+        out: list[dict] = []
+        for r in rows:
+            out.append({"id": int(r["id"]), "plan": str(r["plan"]), "status": str(r["status"]), "created_at": int(r["created_at"])})
+        return out
+
+    @app.post("/client/auth/start", response_model=ClientAuthStartResponseModel)
+    def client_auth_start(body: ClientAuthStartModel, request: Request) -> Any:
+        plan = _plan_normalize(body.plan)
+        email = _sanitize_email(body.email)
+        tg_username = _sanitize_tg_username(body.tg_username)
+        channel = "email" if email else "telegram"
+
+        _init_config_db()
+        with _connect_config_db() as conn:
+            client_id = _create_or_get_client(conn, email, tg_username)
+            now = _now_ts()
+            conn.execute(
+                "INSERT INTO proxy_subscriptions(client_id, account_id, plan, status, starts_at, ends_at, created_at, updated_at) VALUES(?, NULL, ?, 'pending', NULL, NULL, ?, ?)",
+                (client_id, plan, now, now),
+            )
+            token = _client_issue_login_token(conn, client_id, channel)
+            conn.commit()
+
+        base = _get_client_base_url(request)
+        link = f"{base}/client/auth/confirm?token={urllib.parse.quote(token)}" if base else ""
+        if link:
+            print_err(f"Client login link for client_id={client_id} ({channel}): {link}")
+
+        tg_start_url = ""
+        tg_bot = TG_BOT_USERNAME
+        delivery: dict = {"email": "", "telegram": ""}
+        with _connect_config_db() as conn:
+            notify_info = _client_notify_login_link(conn, client_id, link)
+            delivery = dict(notify_info or {})
+            try:
+                conn.commit()
+            except Exception:
+                pass
+            if channel == "telegram" and notify_info.get("telegram") != "sent":
+                token_tg = _client_issue_tg_link_token(conn, client_id)
+                tg_start_url = _tg_start_link(token_tg)
+                conn.commit()
+
+        if CLIENT_DEV_ISSUE_LINKS:
+            return {"status": "ok", "dev_link": link, "tg_start_url": tg_start_url, "tg_bot": tg_bot, "delivery": delivery}
+        return {"status": "ok", "dev_link": "", "tg_start_url": tg_start_url, "tg_bot": tg_bot, "delivery": delivery}
+
+    @app.get("/client/auth/confirm")
+    def client_auth_confirm(token: str, request: Request) -> Any:
+        try:
+            from fastapi.responses import RedirectResponse
+        except Exception:
+            raise HTTPException(status_code=500, detail="FastAPI RedirectResponse unavailable")
+
+        provided = (token or "").strip()
+        if not provided:
+            raise HTTPException(status_code=400, detail="missing token")
+        token_hash = _hash_token(provided)
+        now = _now_ts()
+
+        _init_config_db()
+        with _connect_config_db() as conn:
+            row = conn.execute(
+                "SELECT client_id, expires_at FROM client_login_tokens WHERE token_hash = ?",
+                (token_hash,),
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=400, detail="invalid token")
+            if int(row["expires_at"]) <= now:
+                conn.execute("DELETE FROM client_login_tokens WHERE token_hash = ?", (token_hash,))
+                conn.commit()
+                raise HTTPException(status_code=400, detail="token expired")
+            client_id = int(row["client_id"])
+            conn.execute("DELETE FROM client_login_tokens WHERE token_hash = ?", (token_hash,))
+            session = _client_create_session(conn, client_id)
+            try:
+                msg_row = conn.execute(
+                    "SELECT chat_id, message_id FROM client_login_tg_messages WHERE token_hash = ?",
+                    (token_hash,),
+                ).fetchone()
+            except Exception:
+                msg_row = None
+            if msg_row:
+                conn.execute("DELETE FROM client_login_tg_messages WHERE token_hash = ?", (token_hash,))
+            conn.commit()
+
+        if msg_row and TG_BOT_TOKEN and TelegramBotApi is not None:
+            try:
+                bot = TelegramBotApi(TG_BOT_TOKEN)
+                bot.delete_message(str(msg_row["chat_id"]), int(msg_row["message_id"]))
+            except Exception:
+                pass
+
+        resp = RedirectResponse(url="/client")
+        resp.set_cookie(
+            key="mtclient",
+            value=session,
+            httponly=True,
+            samesite="lax",
+            secure=False,
+            max_age=7 * 24 * 3600,
+        )
+        return resp
+
+    @app.post("/client/logout")
+    def client_logout(request: Request) -> Any:
+        try:
+            from fastapi.responses import JSONResponse
+        except Exception:
+            raise HTTPException(status_code=500, detail="FastAPI JSONResponse unavailable")
+        token = request.cookies.get("mtclient") or ""
+        if token:
+            _init_config_db()
+            with _connect_config_db() as conn:
+                conn.execute("DELETE FROM client_sessions WHERE token_hash = ?", (_hash_token(token),))
+                conn.commit()
+        resp = JSONResponse(content={"status": "ok"})
+        resp.delete_cookie("mtclient")
+        return resp
+
+    @app.get("/client/me", response_model=ClientMeResponseModel)
+    def client_me(request: Request) -> Any:
+        _init_config_db()
+        with _connect_config_db() as conn:
+            client_id = _client_from_session(conn, request)
+            row = conn.execute(
+                "SELECT id, COALESCE(email, '') AS email, COALESCE(tg_username, '') AS tg_username FROM clients WHERE id = ?",
+                (client_id,),
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="client not found")
+            orders = _list_pending_orders(conn, client_id)
+            proxy_accounts = _list_proxy_accounts(conn, client_id)
+        return {
+            "status": "ok",
+            "client": {"id": int(row["id"]), "email": str(row["email"]), "tg_username": str(row["tg_username"])},
+            "orders": orders,
+            "proxy": {"accounts": proxy_accounts},
+        }
+
+    class ClientPaymentConfirmModel(BaseModel):
+        subscription_id: int
+
+    @app.post("/client/payment/confirm")
+    def client_payment_confirm(body: ClientPaymentConfirmModel, request: Request) -> Any:
+        _init_config_db()
+        with _connect_config_db() as conn:
+            client_id = _client_from_session(conn, request)
+            row = conn.execute(
+                "SELECT id, plan, status, account_id FROM proxy_subscriptions WHERE id = ? AND client_id = ?",
+                (int(body.subscription_id), client_id),
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="subscription not found")
+            if row["account_id"] is not None:
+                raise HTTPException(status_code=409, detail="subscription already assigned")
+            if str(row["status"]) == "active":
+                pass
+            elif str(row["status"]) != "pending":
+                raise HTTPException(status_code=409, detail="subscription not pending")
+            plan = str(row["plan"])
+            seconds = _plan_to_seconds(plan)
+            now = _now_ts()
+            ends = now + seconds
+            conn.execute(
+                "UPDATE proxy_subscriptions SET status = 'active', starts_at = ?, ends_at = ?, updated_at = ? WHERE id = ?",
+                (now, ends, now, int(row["id"])),
+            )
+            conn.commit()
+            proxy = _create_proxy_account(conn, client_id)
+            conn.execute(
+                "UPDATE proxy_subscriptions SET account_id = ?, updated_at = ? WHERE id = ? AND client_id = ?",
+                (int(proxy.get("id") or 0), now, int(row["id"]), int(client_id)),
+            )
+            conn.commit()
+            try:
+                _client_notify_proxy(conn, client_id, proxy.get("links") or [])
+            except Exception:
+                pass
+        return {"status": "ok", "subscription": {"id": int(row["id"]), "plan": plan, "status": "active", "starts_at": now, "ends_at": ends, "account_id": int(proxy.get("id") or 0)}, "proxy": proxy}
+
+    class ClientProxyCreateModel(BaseModel):
+        plan: str
+
+    @app.post("/client/proxy/create")
+    def client_proxy_create(body: ClientProxyCreateModel, request: Request) -> Any:
+        _init_config_db()
+        with _connect_config_db() as conn:
+            client_id = _client_from_session(conn, request)
+            plan = _plan_normalize(body.plan)
+            now = _now_ts()
+            row = conn.execute(
+                "SELECT id FROM proxy_subscriptions WHERE client_id = ? AND account_id IS NULL AND status = 'pending' ORDER BY id DESC LIMIT 1",
+                (int(client_id),),
+            ).fetchone()
+            if row:
+                sub_id = int(row["id"])
+                conn.execute(
+                    "UPDATE proxy_subscriptions SET plan = ?, updated_at = ? WHERE id = ? AND client_id = ?",
+                    (plan, now, sub_id, int(client_id)),
+                )
+                conn.commit()
+                return {"status": "ok", "subscription": {"id": sub_id, "plan": plan, "status": "pending"}}
+
+            cur = conn.execute(
+                "INSERT INTO proxy_subscriptions(client_id, account_id, plan, status, starts_at, ends_at, created_at, updated_at) VALUES(?, NULL, ?, 'pending', NULL, NULL, ?, ?)",
+                (int(client_id), plan, now, now),
+            )
+            conn.commit()
+            return {"status": "ok", "subscription": {"id": int(cur.lastrowid), "plan": plan, "status": "pending"}}
+
+    @app.post("/client/order/cancel")
+    def client_order_cancel(request: Request) -> Any:
+        _init_config_db()
+        with _connect_config_db() as conn:
+            client_id = _client_from_session(conn, request)
+            row = conn.execute(
+                "SELECT id FROM proxy_subscriptions WHERE client_id = ? AND account_id IS NULL AND status = 'pending' ORDER BY id DESC LIMIT 1",
+                (int(client_id),),
+            ).fetchone()
+            if not row:
+                return {"status": "ok", "cancelled": False}
+            sub_id = int(row["id"])
+            conn.execute(
+                "DELETE FROM proxy_subscriptions WHERE id = ? AND client_id = ? AND account_id IS NULL AND status = 'pending'",
+                (sub_id, int(client_id)),
+            )
+            conn.commit()
+        return {"status": "ok", "cancelled": True}
+
+    class ClientProxyRecreateModel(BaseModel):
+        account_id: int
+
+    @app.post("/client/proxy/recreate")
+    def client_proxy_recreate(body: ClientProxyRecreateModel, request: Request) -> Any:
+        _init_config_db()
+        with _connect_config_db() as conn:
+            client_id = _client_from_session(conn, request)
+            _ensure_active_subscription(conn, client_id, int(body.account_id))
+            proxy = _recreate_proxy_account(conn, client_id, int(body.account_id))
+            try:
+                _client_notify_proxy(conn, client_id, proxy.get("links") or [])
+            except Exception:
+                pass
+        return {"status": "ok", "proxy": proxy}
+
+    @app.delete("/client/proxy/{account_id}")
+    def client_proxy_delete(account_id: int, request: Request) -> Any:
+        _init_config_db()
+        with _connect_config_db() as conn:
+            client_id = _client_from_session(conn, request)
+            # allow deleting even if expired (cleanup), but ensure the account belongs to the client
+            _delete_proxy_account(conn, client_id, int(account_id))
+        return {"status": "ok"}
+
+    @app.post("/client/tg/link/start")
+    def client_tg_link_start(request: Request) -> Any:
+        if not TG_BOT_TOKEN:
+            raise HTTPException(status_code=409, detail="telegram bot not configured")
+        _init_config_db()
+        with _connect_config_db() as conn:
+            client_id = _client_from_session(conn, request)
+            token_tg = _client_issue_tg_link_token(conn, client_id)
+            conn.commit()
+        return {"status": "ok", "start_url": _tg_start_link(token_tg), "bot": TG_BOT_USERNAME}
 
     def _validate_secret(secret: str) -> str:
         if re.fullmatch(r"[0-9a-fA-F]{32}", secret):
@@ -3094,6 +4091,13 @@ def create_utilitary_tasks(loop):
 
     stats_sampler_task = asyncio.Task(stats_sampler(), loop=loop)
     tasks.append(stats_sampler_task)
+
+    client_watcher_task = asyncio.Task(client_subscription_watcher(), loop=loop)
+    tasks.append(client_watcher_task)
+
+    if TG_BOT_POLL and TG_BOT_TOKEN:
+        tg_poller_task = asyncio.Task(telegram_bot_poller(), loop=loop)
+        tasks.append(tg_poller_task)
 
     if config.USE_MIDDLE_PROXY:
         middle_proxy_updater_task = asyncio.Task(update_middle_proxy_info(), loop=loop)

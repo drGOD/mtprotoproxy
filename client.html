@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Прокси подписка</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --panel: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --accent: #2563eb;
+      --danger: #dc2626;
+      --ok: #16a34a;
+      --border: rgba(15, 23, 42, 0.12);
+      --shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Ubuntu, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+      background: var(--bg);
+      color: var(--text);
+    }
+    a { color: var(--accent); text-decoration: none; }
+    .wrap { max-width: 980px; margin: 0 auto; padding: 24px; }
+    header { display:flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 16px; }
+    h1 { font-size: 18px; margin: 0; }
+    .sub { color: var(--muted); font-size: 13px; }
+    .grid { display:grid; grid-template-columns: 1fr; gap: 14px; }
+    @media (min-width: 900px) {
+      .grid { grid-template-columns: repeat(12, 1fr); }
+      .span-5 { grid-column: span 5; }
+      .span-7 { grid-column: span 7; }
+      .span-12 { grid-column: span 12; }
+    }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 16px; box-shadow: var(--shadow); }
+    .card h2 { font-size: 14px; margin: 0 0 10px 0; }
+    .row { display: grid; grid-template-columns: 1fr; gap: 10px; }
+    .row2 { display:grid; grid-template-columns: 1fr; gap: 10px; }
+    @media (min-width: 600px) { .row2 { grid-template-columns: 1fr 1fr; } }
+    label { display:block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    input[type="text"], input[type="email"] {
+      width: 100%;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      color: var(--text);
+      outline: none;
+    }
+    button {
+      border: 1px solid var(--border);
+      background: #ffffff;
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+    button.primary { background: rgba(37,99,235,0.10); border-color: rgba(37,99,235,0.35); }
+    button.danger { background: rgba(220,38,38,0.08); border-color: rgba(220,38,38,0.35); }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .status { font-size: 12px; color: var(--muted); }
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--danger); }
+    .note { font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.35; }
+    .plans { display:grid; grid-template-columns: 1fr; gap: 10px; margin-top: 10px; }
+    @media (min-width: 700px) { .plans { grid-template-columns: 1fr 1fr 1fr; } }
+    .plan { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: #f8fafc; }
+    .plan .name { font-weight: 700; }
+    .plan .price { margin-top: 6px; font-size: 13px; color: var(--muted); }
+    code { background: #f1f5f9; padding: 2px 6px; border-radius: 8px; border: 1px solid var(--border); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .qr { display:grid; grid-template-columns: 1fr; gap: 12px; align-items: start; }
+    @media (min-width: 520px) { .qr { grid-template-columns: 220px 1fr; } }
+    .qr-box { width: 220px; height: 220px; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background:#fff; }
+    .qr-box img { width: 220px; height: 220px; display:block; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; border-bottom: 1px solid var(--border); padding: 10px 8px; font-size: 13px; }
+    th { color: var(--muted); font-weight: 600; }
+    .right { text-align: right; }
+    .actions { display:flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+  </style>
+</head>
+<body>
+<div id="app" class="wrap">
+  <header>
+    <div>
+      <h1>Платный MTProto proxy</h1>
+      <div class="sub">Подписка + персональная ссылка и QR. Вход без пароля по ссылке из email/Telegram.</div>
+    </div>
+    <div class="status" :class="statusClass">{{ statusText }}</div>
+  </header>
+
+  <div class="grid">
+    <section v-if="view === 'landing'" class="card span-12">
+      <h2>1) Выбор тарифа и вход</h2>
+      <div class="note">
+        Выбери тариф и укажи email или Telegram username — мы пришлём ссылку для входа.
+      </div>
+
+      <div class="plans">
+        <div class="plan">
+          <div class="name">Неделя</div>
+          <div class="price">7 дней</div>
+          <div class="actions">
+            <button class="primary" @click="selectPlan('week')" :disabled="busy">Выбрать</button>
+          </div>
+        </div>
+        <div class="plan">
+          <div class="name">Месяц</div>
+          <div class="price">30 дней</div>
+          <div class="actions">
+            <button class="primary" @click="selectPlan('month')" :disabled="busy">Выбрать</button>
+          </div>
+        </div>
+        <div class="plan">
+          <div class="name">Год</div>
+          <div class="price">365 дней</div>
+          <div class="actions">
+            <button class="primary" @click="selectPlan('year')" :disabled="busy">Выбрать</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="note" style="margin-top:12px;">
+        Текущий выбор: <code class="mono">{{ selectedPlan }}</code>
+      </div>
+
+      <div class="row" style="margin-top:12px;">
+        <div>
+          <label>Email (или Telegram username)</label>
+          <input type="email" v-model.trim="auth.email" placeholder="you@example.com" />
+        </div>
+        <div>
+          <label>Telegram username (или email)</label>
+          <input type="text" v-model.trim="auth.tg_username" placeholder="@username" />
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="primary" @click="startAuth" :disabled="busy || !selectedPlan || (!auth.email && !auth.tg_username)">Продолжить</button>
+        <button @click="loadMe" :disabled="busy">У меня уже есть кабинет</button>
+      </div>
+    </section>
+
+    <section v-if="view === 'confirm'" class="card span-12">
+      <h2>2) Подтверждение</h2>
+
+      <div class="note" v-if="deliveryText">{{ deliveryText }}</div>
+      <div class="note" v-else>Ссылка для входа создана.</div>
+
+      <div class="note" v-if="delivery && delivery.telegram === 'sent'" style="margin-top:10px;">
+        Перейди в Telegram и открой ссылку для входа.
+      </div>
+      <div class="note" v-if="delivery && delivery.email === 'sent'" style="margin-top:10px;">
+        Проверь почту и открой ссылку для входа.
+      </div>
+
+      <div v-if="tgStartUrl" class="note" style="margin-top:10px;">
+        <div style="margin-top:6px;">Ссылка для запуска бота (бот: <code class="mono">{{ tgBotLabel }}</code>):</div>
+        <div class="mono" style="margin-top:6px; word-break: break-all;">{{ tgStartUrl }}</div>
+        <div class="actions" style="margin-top:10px;">
+          <button @click="openTgStart" :disabled="busy">Открыть Telegram</button>
+          <button @click="copyTgStart" :disabled="busy">Копировать</button>
+        </div>
+      </div>
+
+      <div v-if="devLink" class="note" style="margin-top:10px;">
+        Dev-ссылка (пока нет отправки):
+        <div class="mono" style="margin-top:6px; word-break: break-all;">{{ devLink }}</div>
+        <div class="actions" style="margin-top:10px;">
+          <button @click="openDevLink" :disabled="busy">Открыть</button>
+          <button @click="copyDevLink" :disabled="busy">Копировать</button>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button @click="goLanding" :disabled="busy">Назад</button>
+      </div>
+
+      <div class="note">
+        Чтобы dev-ссылка появилась тут, запусти с env <code class="mono">MTPROTO_DEV_ISSUE_LINKS=1</code>.
+      </div>
+    </section>
+
+    <section v-if="view === 'cabinet'" class="card span-12">
+      <h2>3) Личный кабинет</h2>
+
+      <div class="row2">
+        <div>
+          <label>Клиент</label>
+          <div class="mono">id={{ me.client.id }}</div>
+          <div class="mono" v-if="me.client.email">email={{ me.client.email }}</div>
+          <div class="mono" v-if="me.client.tg_username">tg=@{{ me.client.tg_username }}</div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button @click="loadMe" :disabled="busy">Обновить</button>
+        <button class="danger" @click="logout" :disabled="busy">Выйти</button>
+      </div>
+
+      <div class="card" style="margin-top:12px; padding: 14px;">
+        <h2 style="margin-bottom:8px;">Покупки / оплата (заглушка)</h2>
+        <div class="note">Каждый прокси-аккаунт оплачивается отдельно. После оплаты появится новый прокси.</div>
+
+        <div class="actions">
+          <button class="primary" @click="createOrder('week')" :disabled="busy">Купить на неделю</button>
+          <button class="primary" @click="createOrder('month')" :disabled="busy">Купить на месяц</button>
+          <button class="primary" @click="createOrder('year')" :disabled="busy">Купить на год</button>
+        </div>
+
+        <div v-if="!(me.orders && me.orders.length)" class="note" style="margin-top:10px;">Нет ожидающих оплат.</div>
+
+        <div v-else class="card" style="margin-top:12px; padding: 14px;">
+          <div class="mono">order_id={{ me.orders[0].id }}</div>
+          <div class="mono">plan={{ me.orders[0].plan }}</div>
+          <div class="mono">status={{ me.orders[0].status }}</div>
+          <div class="actions" style="margin-top:10px;">
+            <button class="primary" @click="confirmPayment(me.orders[0].id)" :disabled="busy">Я оплатил(а)</button>
+            <button class="danger" @click="cancelOrder" :disabled="busy">Отменить</button>
+          </div>
+          <div class="note" style="margin-top:10px;">Кнопки неделя/месяц/год меняют период в этом заказе.</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:12px; padding: 14px;">
+        <h2 style="margin-bottom:8px;">Прокси</h2>
+        <div class="note">Прокси-аккаунты независимы. У каждого своя подписка.</div>
+
+        <div v-if="!(me.proxy && me.proxy.accounts && me.proxy.accounts.length)" class="note" style="margin-top:10px;">
+          Пока нет созданных прокси.
+        </div>
+
+        <div v-for="acc in (me.proxy.accounts || [])" :key="acc.id" class="card" style="margin-top:12px; padding: 14px;">
+          <div class="note">proxy_user: <code class="mono">{{ acc.proxy_user }}</code></div>
+
+          <div class="note" style="margin-top:8px;">
+            подписка: <code class="mono">{{ (acc.subscription && acc.subscription.status) || 'none' }}</code>
+            <span v-if="acc.subscription && acc.subscription.plan">, plan=<code class="mono">{{ acc.subscription.plan }}</code></span>
+            <span v-if="acc.subscription && acc.subscription.ends_at">, ends_at=<code class="mono">{{ fmtTs(acc.subscription.ends_at) }}</code></span>
+          </div>
+
+          <div class="actions">
+            <button @click="recreateProxy(acc.id)" :disabled="busy || !(acc.subscription && acc.subscription.status === 'active')">Пересоздать</button>
+            <button class="danger" @click="deleteProxy(acc.id)" :disabled="busy">Удалить</button>
+          </div>
+
+          <div v-if="(acc.links || []).length" style="margin-top:12px;">
+            <label>Ссылки</label>
+            <table style="margin-top:6px;">
+              <thead>
+                <tr>
+                  <th>Mode</th>
+                  <th>Link</th>
+                  <th class="right">QR</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="l in acc.links" :key="acc.id + ':' + l.mode">
+                  <td class="mono">{{ l.mode }}</td>
+                  <td class="mono" style="word-break: break-all;">{{ l.link }}</td>
+                  <td class="right"><button @click="openQr(l)" :disabled="busy">QR</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <section v-if="qr.open" class="card span-12">
+      <h2>QR</h2>
+      <div class="qr">
+        <div class="qr-box" ref="qrBox"></div>
+        <div>
+          <label>Ссылка</label>
+          <input type="text" class="mono" :value="qr.link" readonly />
+          <div class="actions">
+            <button class="primary" @click="copyQrLink" :disabled="busy || !qr.link">Копировать</button>
+            <button @click="closeQr" :disabled="busy">Закрыть</button>
+          </div>
+          <div class="note">Отсканируй QR в Telegram.</div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+const { createApp } = Vue
+
+createApp({
+  data() {
+    return {
+      busy: false,
+      statusText: "",
+      statusKind: "",
+      view: "landing",
+      selectedPlan: "week",
+      auth: { email: "", tg_username: "" },
+      devLink: "",
+      tgStartUrl: "",
+      tgBot: "",
+      delivery: { email: "", telegram: "" },
+      me: null,
+      qr: { open: false, link: "" }
+    }
+  },
+  computed: {
+    statusClass() {
+      if (this.statusKind === 'ok') return 'ok'
+      if (this.statusKind === 'err') return 'err'
+      return ''
+    }
+    ,
+    tgBotLabel() {
+      const b = (this.tgBot || '').trim()
+      if (!b) return '@your_bot'
+      if (b.startsWith('@')) return b
+      return '@' + b
+    },
+    deliveryText() {
+      const d = this.delivery || {}
+      const em = d.email || ''
+      const tg = d.telegram || ''
+      if (em === 'sent') return 'Ссылка для входа отправлена на почту.'
+      if (tg === 'sent') return 'Ссылка для входа отправлена в Telegram.'
+      if (em === 'failed' && tg === 'failed') return 'Не удалось отправить ссылку ни на почту, ни в Telegram. Попробуй ещё раз или используй dev-ссылку (в режиме разработки).'
+      if (em === 'failed') return 'Не удалось отправить ссылку на почту. Попробуй ещё раз.'
+      if (tg === 'failed') return 'Не удалось отправить ссылку в Telegram. Попробуй ещё раз.'
+      return ''
+    }
+  },
+  methods: {
+    setStatus(kind, text) {
+      this.statusKind = kind
+      this.statusText = text
+    },
+    async apiFetch(path, opts) {
+      const headers = { "Content-Type": "application/json" }
+      const res = await fetch(path, { headers, credentials: 'include', ...opts })
+      const ct = res.headers.get('content-type') || ''
+      let body = null
+      if (ct.includes('application/json')) body = await res.json()
+      else body = await res.text()
+      if (!res.ok) {
+        const detail = body && body.detail ? body.detail : body
+        throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))
+      }
+      return body
+    },
+    selectPlan(p) {
+      this.selectedPlan = p
+      this.setStatus('', '')
+    },
+    goLanding() {
+      this.view = 'landing'
+      this.setStatus('', '')
+    },
+    async startAuth() {
+      this.busy = true
+      try {
+        this.devLink = ""
+        this.tgStartUrl = ""
+        this.tgBot = ""
+        this.delivery = { email: "", telegram: "" }
+        const payload = { plan: this.selectedPlan, email: this.auth.email || "", tg_username: this.auth.tg_username || "" }
+        const resp = await this.apiFetch('/client/auth/start', { method: 'POST', body: JSON.stringify(payload) })
+        this.devLink = resp.dev_link || ""
+        this.tgStartUrl = resp.tg_start_url || ""
+        this.tgBot = resp.tg_bot || ""
+        this.delivery = resp.delivery || { email: "", telegram: "" }
+        this.view = 'confirm'
+        this.setStatus('ok', 'Отправили ссылку для входа')
+      } catch (e) {
+        this.setStatus('err', 'Ошибка: ' + e.message)
+      } finally {
+        this.busy = false
+      }
+    },
+    openTgStart() {
+      if (this.tgStartUrl) window.open(this.tgStartUrl, '_blank')
+    },
+    async copyTgStart() {
+      try {
+        await navigator.clipboard.writeText(this.tgStartUrl)
+        this.setStatus('ok', 'Ссылка Telegram скопирована')
+      } catch (e) {
+        this.setStatus('err', 'Не удалось скопировать')
+      }
+    },
+    openDevLink() {
+      if (this.devLink) window.location.href = this.devLink
+    },
+    async copyDevLink() {
+      try {
+        await navigator.clipboard.writeText(this.devLink)
+        this.setStatus('ok', 'Ссылка скопирована')
+      } catch (e) {
+        this.setStatus('err', 'Не удалось скопировать')
+      }
+    },
+    async loadMe() {
+      this.busy = true
+      try {
+        const me = await this.apiFetch('/client/me', { method: 'GET' })
+        this.me = me
+        this.view = 'cabinet'
+        this.setStatus('ok', 'Готово')
+      } catch (e) {
+        this.setStatus('err', 'Ошибка: ' + e.message)
+      } finally {
+        this.busy = false
+      }
+    },
+    fmtTs(ts) {
+      try {
+        return new Date(ts * 1000).toISOString().replace('T', ' ').replace('Z', '')
+      } catch (e) {
+        return String(ts)
+      }
+    },
+    async createOrder(plan) {
+      this.busy = true
+      try {
+        const resp = await this.apiFetch('/client/proxy/create', { method: 'POST', body: JSON.stringify({ plan: plan }) })
+        this.setStatus('ok', 'Создали заказ на оплату')
+        await this.loadMe()
+      } catch (e) {
+        this.setStatus('err', 'Ошибка: ' + e.message)
+      } finally {
+        this.busy = false
+      }
+    },
+    async confirmPayment(orderId) {
+      this.busy = true
+      try {
+        const resp = await this.apiFetch('/client/payment/confirm', { method: 'POST', body: JSON.stringify({ subscription_id: orderId }) })
+        this.setStatus('ok', 'Оплата подтверждена, прокси создан')
+        await this.loadMe()
+      } catch (e) {
+        this.setStatus('err', 'Ошибка: ' + e.message)
+      } finally {
+        this.busy = false
+      }
+    },
+    async cancelOrder() {
+      this.busy = true
+      try {
+        await this.apiFetch('/client/order/cancel', { method: 'POST', body: '{}' })
+        this.setStatus('ok', 'Заказ отменён')
+        await this.loadMe()
+      } catch (e) {
+        this.setStatus('err', 'Ошибка: ' + e.message)
+      } finally {
+        this.busy = false
+      }
+    },
+    async recreateProxy(accountId) {
+      this.busy = true
+      try {
+        await this.apiFetch('/client/proxy/recreate', { method: 'POST', body: JSON.stringify({ account_id: accountId }) })
+        await this.loadMe()
+        this.setStatus('ok', 'Прокси пересоздан')
+      } catch (e) {
+        this.setStatus('err', 'Ошибка: ' + e.message)
+      } finally {
+        this.busy = false
+      }
+    },
+    async deleteProxy(accountId) {
+      this.busy = true
+      try {
+        await this.apiFetch('/client/proxy/' + accountId, { method: 'DELETE' })
+        await this.loadMe()
+        this.setStatus('ok', 'Прокси удалён')
+      } catch (e) {
+        this.setStatus('err', 'Ошибка: ' + e.message)
+      } finally {
+        this.busy = false
+      }
+    },
+    openQr(l) {
+      this.qr.open = true
+      this.qr.link = l.link
+      this.$nextTick(() => this.renderQr())
+    },
+    closeQr() {
+      this.qr.open = false
+      this.qr.link = ''
+    },
+    async renderQr() {
+      try {
+        if (!this.qr.link) return
+        const box = this.$refs.qrBox
+        if (!box) return
+        if (typeof QRCode === 'undefined') throw new Error('QRCode library not loaded')
+        while (box.firstChild) box.removeChild(box.firstChild)
+        new QRCode(box, { text: this.qr.link, width: 220, height: 220, correctLevel: QRCode.CorrectLevel.M })
+      } catch (e) {
+        this.setStatus('err', 'QR ошибка: ' + e.message)
+      }
+    },
+    async copyQrLink() {
+      try {
+        await navigator.clipboard.writeText(this.qr.link)
+        this.setStatus('ok', 'Ссылка скопирована')
+      } catch (e) {
+        this.setStatus('err', 'Не удалось скопировать')
+      }
+    },
+    async logout() {
+      this.busy = true
+      try {
+        await this.apiFetch('/client/logout', { method: 'POST', body: '{}' })
+        this.me = null
+        this.view = 'landing'
+        this.setStatus('ok', 'Вы вышли')
+      } catch (e) {
+        this.setStatus('err', 'Ошибка выхода: ' + e.message)
+      } finally {
+        this.busy = false
+      }
+    }
+  },
+  async mounted() {
+    await this.loadMe()
+  }
+}).mount('#app')
+</script>
+</body>
+</html>
