@@ -19,6 +19,19 @@ import signal
 import os
 import stat
 import traceback
+import sqlite3
+from typing import Any, Dict
+
+try:
+    import uvicorn
+    from fastapi import FastAPI, HTTPException
+    from pydantic import BaseModel, Field
+except ImportError:  # pragma: no cover
+    uvicorn = None
+    FastAPI = None
+    HTTPException = None
+    BaseModel = None
+    Field = None
 
 
 TG_DATACENTER_PORT = 443
@@ -96,13 +109,118 @@ stats = collections.Counter()
 user_stats = collections.defaultdict(collections.Counter)
 
 config = {}
+config_source = os.environ.get("MTPROTO_CONFIG_SOURCE", "db")
+
+CONFIG_DB_PATH = os.environ.get("MTPROTO_CONFIG_DB", "./config.db")
+API_LISTEN_HOST = os.environ.get("MTPROTO_API_HOST", "127.0.0.1")
+API_LISTEN_PORT = int(os.environ.get("MTPROTO_API_PORT", "8080"))
+
+_config_db_inited = False
+_proxy_listen_port_at_start: int = 0
+_api_server = None
+
+
+def _connect_config_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(CONFIG_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _init_config_db() -> None:
+    global _config_db_inited
+    if _config_db_inited:
+        return
+
+    with _connect_config_db() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS kv (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                name TEXT PRIMARY KEY,
+                secret TEXT NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+            """
+        )
+
+        now = int(time.time())
+        defaults = [
+            ("port", "443"),
+            ("tls_domain", "yandex.ru"),
+            ("ad_tag", ""),
+            ("modes_classic", "0"),
+            ("modes_secure", "1"),
+            ("modes_tls", "1"),
+        ]
+        for key, default in defaults:
+            conn.execute(
+                "INSERT OR IGNORE INTO kv(key, value, updated_at) VALUES(?, ?, ?)",
+                (key, default, now),
+            )
+
+        # ensure at least one user exists
+        has_user = conn.execute("SELECT 1 FROM users LIMIT 1").fetchone()
+        if not has_user:
+            conn.execute(
+                "INSERT OR IGNORE INTO users(name, secret, updated_at) VALUES(?, ?, ?)",
+                ("tg", "00000000000000000000000000000000", now),
+            )
+        conn.commit()
+
+    _config_db_inited = True
+
+
+def _get_kv(conn: sqlite3.Connection, key: str) -> str:
+    row = conn.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
+    if not row:
+        raise KeyError(key)
+    return str(row["value"])
+
+
+def _set_kv(conn: sqlite3.Connection, key: str, value: str) -> None:
+    now = int(time.time())
+    conn.execute(
+        "INSERT INTO kv(key, value, updated_at) VALUES(?, ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        (key, value, now),
+    )
+
+
+def _load_conf_dict_from_db() -> Dict[str, Any]:
+    _init_config_db()
+    with _connect_config_db() as conn:
+        conf_dict: Dict[str, Any] = {}
+        conf_dict["PORT"] = int(_get_kv(conn, "port"))
+        conf_dict["TLS_DOMAIN"] = _get_kv(conn, "tls_domain")
+        conf_dict["AD_TAG"] = _get_kv(conn, "ad_tag")
+        conf_dict["MODES"] = {
+            "classic": _get_kv(conn, "modes_classic") not in ("0", "false", "False", ""),
+            "secure": _get_kv(conn, "modes_secure") not in ("0", "false", "False", ""),
+            "tls": _get_kv(conn, "modes_tls") not in ("0", "false", "False", ""),
+        }
+
+        rows = conn.execute("SELECT name, secret FROM users ORDER BY name").fetchall()
+        conf_dict["USERS"] = {str(r["name"]): str(r["secret"]) for r in rows}
+
+    return conf_dict
 
 
 def init_config():
     global config
     # we use conf_dict to protect the original config from exceptions when reloading
     if len(sys.argv) < 2:
-        conf_dict = runpy.run_module("config")
+        if config_source == "db":
+            conf_dict = _load_conf_dict_from_db()
+        else:
+            conf_dict = runpy.run_module("config")
     elif len(sys.argv) == 2:
         # launch with own config
         conf_dict = runpy.run_path(sys.argv[1])
@@ -293,6 +411,23 @@ def init_config():
 
     # allow access to config by attributes
     config = type("config", (dict,), conf_dict)(conf_dict)
+
+
+def reload_config_internal() -> None:
+    init_config()
+    ensure_users_in_user_stats()
+    apply_upstream_proxy_settings()
+    print("Config reloaded", flush=True, file=sys.stderr)
+    print_tg_info()
+
+
+def _ensure_port_is_static() -> None:
+    global _proxy_listen_port_at_start
+    if not _proxy_listen_port_at_start:
+        _proxy_listen_port_at_start = int(config.PORT)
+        return
+    if int(config.PORT) != _proxy_listen_port_at_start:
+        raise ValueError("PORT change requires proxy restart")
 
 
 def apply_upstream_proxy_settings():
@@ -2213,13 +2348,204 @@ def setup_signals():
 
     if hasattr(signal, 'SIGUSR2'):
         def reload_signal(signum, frame):
-            init_config()
-            ensure_users_in_user_stats()
-            apply_upstream_proxy_settings()
-            print("Config reloaded", flush=True, file=sys.stderr)
-            print_tg_info()
+            reload_config_internal()
 
         signal.signal(signal.SIGUSR2, reload_signal)
+
+
+def _create_api_app():
+    if FastAPI is None:
+        return None
+
+    class ModesModel(BaseModel):
+        classic: bool = False
+        secure: bool = True
+        tls: bool = True
+
+    class ConfigModel(BaseModel):
+        port: int = Field(ge=1, le=65535)
+        users: Dict[str, str]
+        modes: ModesModel
+        tls_domain: str
+        ad_tag: str = ""
+
+    class UserCreateModel(BaseModel):
+        name: str = Field(min_length=1, max_length=64)
+        secret: str
+
+    class UserUpdateModel(BaseModel):
+        secret: str
+
+    app = FastAPI(title="mtprotoproxy")
+
+    def _load_ui_html() -> str:
+        try:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            ui_path = os.path.join(base_dir, "ui.html")
+            with open(ui_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            raise HTTPException(status_code=404, detail="ui.html not found")
+
+    @app.get("/")
+    @app.get("/ui")
+    def ui() -> Any:
+        try:
+            from fastapi.responses import HTMLResponse
+        except Exception:
+            raise HTTPException(status_code=500, detail="FastAPI HTMLResponse unavailable")
+        return HTMLResponse(_load_ui_html())
+
+    def _validate_secret(secret: str) -> str:
+        if re.fullmatch(r"[0-9a-fA-F]{32}", secret):
+            return secret.lower()
+        raise HTTPException(status_code=400, detail="secret must be 32 hex chars")
+
+    def _dump_config_from_db() -> Dict[str, Any]:
+        conf = _load_conf_dict_from_db()
+        return {
+            "port": int(conf["PORT"]),
+            "users": dict(conf["USERS"]),
+            "modes": dict(conf["MODES"]),
+            "tls_domain": str(conf["TLS_DOMAIN"]),
+            "ad_tag": str(conf.get("AD_TAG", "")),
+        }
+
+    @app.get("/health")
+    def health() -> Dict[str, Any]:
+        return {"status": "ok"}
+
+    @app.get("/config", response_model=ConfigModel)
+    def get_config() -> Dict[str, Any]:
+        return _dump_config_from_db()
+
+    @app.put("/config", response_model=ConfigModel)
+    def put_config(body: ConfigModel) -> Dict[str, Any]:
+        desired = body.model_dump()
+
+        if _proxy_listen_port_at_start and int(desired["port"]) != _proxy_listen_port_at_start:
+            raise HTTPException(status_code=409, detail="changing port requires restart")
+
+        _init_config_db()
+        with _connect_config_db() as conn:
+            _set_kv(conn, "port", str(int(desired["port"])))
+            _set_kv(conn, "tls_domain", str(desired["tls_domain"]))
+            _set_kv(conn, "ad_tag", str(desired.get("ad_tag", "")))
+            _set_kv(conn, "modes_classic", "1" if desired["modes"]["classic"] else "0")
+            _set_kv(conn, "modes_secure", "1" if desired["modes"]["secure"] else "0")
+            _set_kv(conn, "modes_tls", "1" if desired["modes"]["tls"] else "0")
+
+            conn.execute("DELETE FROM users")
+            now = int(time.time())
+            for name, secret in desired["users"].items():
+                conn.execute(
+                    "INSERT INTO users(name, secret, updated_at) VALUES(?, ?, ?)",
+                    (str(name), _validate_secret(str(secret)), now),
+                )
+            conn.commit()
+
+        reload_config_internal()
+        _ensure_port_is_static()
+        return _dump_config_from_db()
+
+    @app.get("/users")
+    def list_users() -> Dict[str, Any]:
+        return {"users": _dump_config_from_db()["users"]}
+
+    @app.post("/users", status_code=201)
+    def create_user(body: UserCreateModel) -> Dict[str, Any]:
+        _init_config_db()
+        with _connect_config_db() as conn:
+            exists = conn.execute("SELECT 1 FROM users WHERE name = ?", (body.name,)).fetchone()
+            if exists:
+                raise HTTPException(status_code=409, detail="user already exists")
+            now = int(time.time())
+            conn.execute(
+                "INSERT INTO users(name, secret, updated_at) VALUES(?, ?, ?)",
+                (body.name, _validate_secret(body.secret), now),
+            )
+            conn.commit()
+
+        reload_config_internal()
+        _ensure_port_is_static()
+        return {"name": body.name}
+
+    @app.put("/users/{name}")
+    def update_user(name: str, body: UserUpdateModel) -> Dict[str, Any]:
+        _init_config_db()
+        with _connect_config_db() as conn:
+            row = conn.execute("SELECT 1 FROM users WHERE name = ?", (name,)).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="user not found")
+            now = int(time.time())
+            conn.execute(
+                "UPDATE users SET secret = ?, updated_at = ? WHERE name = ?",
+                (_validate_secret(body.secret), now, name),
+            )
+            conn.commit()
+
+        reload_config_internal()
+        _ensure_port_is_static()
+        return {"name": name}
+
+    @app.delete("/users/{name}", status_code=204)
+    def delete_user(name: str) -> None:
+        _init_config_db()
+        with _connect_config_db() as conn:
+            cur = conn.execute("DELETE FROM users WHERE name = ?", (name,))
+            conn.commit()
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="user not found")
+
+        reload_config_internal()
+        _ensure_port_is_static()
+
+    return app
+
+
+def start_config_api(loop):
+    if uvicorn is None:
+        print_err("fastapi/uvicorn are not installed, config api is disabled")
+        return
+
+    app = _create_api_app()
+    if app is None:
+        return
+
+    global _api_server
+    config_uv = uvicorn.Config(app, host=API_LISTEN_HOST, port=API_LISTEN_PORT, log_level="warning")
+    server = uvicorn.Server(config_uv)
+    # Uvicorn installs SIGINT/SIGTERM handlers by default. This breaks Ctrl+C handling in our
+    # own event loop, so disable it and manage shutdown ourselves.
+    try:
+        server.install_signal_handlers = lambda: None
+    except Exception:
+        pass
+    _api_server = server
+    loop.create_task(server.serve())
+
+
+def setup_shutdown_signals(loop):
+    def _request_exit():
+        global _api_server
+        try:
+            if _api_server is not None:
+                _api_server.should_exit = True
+        except Exception:
+            pass
+        loop.stop()
+
+    for sig_name in ("SIGINT", "SIGTERM"):
+        sig = getattr(signal, sig_name, None)
+        if sig is None:
+            continue
+        try:
+            if hasattr(loop, "add_signal_handler"):
+                loop.add_signal_handler(sig, _request_exit)
+            else:
+                signal.signal(sig, lambda s, f: _request_exit())
+        except NotImplementedError:
+            signal.signal(sig, lambda s, f: _request_exit())
 
 
 def try_setup_uvloop():
@@ -2331,6 +2657,7 @@ def create_utilitary_tasks(loop):
 
 def main():
     init_config()
+    _ensure_port_is_static()
     ensure_users_in_user_stats()
     apply_upstream_proxy_settings()
     init_ip_info()
@@ -2351,9 +2678,13 @@ def main():
     asyncio.set_event_loop(loop)
     loop.set_exception_handler(loop_exception_handler)
 
+    setup_shutdown_signals(loop)
+
     utilitary_tasks = create_utilitary_tasks(loop)
     for task in utilitary_tasks:
         asyncio.ensure_future(task)
+
+    start_config_api(loop)
 
     servers = create_servers(loop)
 

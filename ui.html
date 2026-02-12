@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MTProto Proxy Manager</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --panel: #111a2e;
+      --text: #e7eefc;
+      --muted: #a9b4cc;
+      --accent: #4f8cff;
+      --danger: #ff5b6e;
+      --ok: #44d19d;
+      --border: rgba(231, 238, 252, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Ubuntu, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+      background: radial-gradient(1200px 800px at 20% 0%, rgba(79,140,255,0.22), transparent 60%),
+                  radial-gradient(900px 600px at 80% 20%, rgba(68,209,157,0.18), transparent 55%),
+                  var(--bg);
+      color: var(--text);
+    }
+    a { color: var(--accent); text-decoration: none; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    header { display: flex; gap: 16px; align-items: baseline; justify-content: space-between; margin-bottom: 18px; }
+    h1 { font-size: 18px; margin: 0; letter-spacing: 0.2px; }
+    .sub { color: var(--muted); font-size: 13px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+    @media (min-width: 900px) { .grid { grid-template-columns: 1.2fr 0.8fr; } }
+    .card { background: rgba(17,26,46,0.85); border: 1px solid var(--border); border-radius: 14px; padding: 16px; backdrop-filter: blur(8px); }
+    .card h2 { font-size: 14px; margin: 0 0 10px 0; color: var(--text); }
+    .row { display: grid; grid-template-columns: 1fr; gap: 10px; }
+    .row2 { display: grid; grid-template-columns: 1fr; gap: 10px; }
+    @media (min-width: 600px) { .row2 { grid-template-columns: 1fr 1fr; } }
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    input[type="text"], input[type="number"] {
+      width: 100%;
+      background: rgba(11,18,32,0.9);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      color: var(--text);
+      outline: none;
+    }
+    input[disabled] { opacity: 0.6; cursor: not-allowed; }
+    .toggles { display: flex; flex-wrap: wrap; gap: 10px; }
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--border);
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: rgba(11,18,32,0.55);
+      user-select: none;
+    }
+    .toggle input { accent-color: var(--accent); }
+    .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+    button {
+      border: 1px solid var(--border);
+      background: rgba(11,18,32,0.75);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+    button.primary { background: rgba(79,140,255,0.18); border-color: rgba(79,140,255,0.45); }
+    button.danger { background: rgba(255,91,110,0.12); border-color: rgba(255,91,110,0.45); }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .note { font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.35; }
+    .status { font-size: 12px; color: var(--muted); }
+    .status.ok { color: var(--ok); }
+    .status.err { color: var(--danger); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; border-bottom: 1px solid var(--border); padding: 10px 8px; font-size: 13px; }
+    th { color: var(--muted); font-weight: 600; }
+    code { background: rgba(11,18,32,0.7); padding: 2px 6px; border-radius: 8px; border: 1px solid var(--border); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .right { text-align: right; }
+    .pill { display: inline-flex; gap: 8px; align-items: center; }
+  </style>
+</head>
+<body>
+<div id="app" class="wrap">
+  <header>
+    <div>
+      <h1>MTProto Proxy Manager</h1>
+      <div class="sub">UI работает с REST API прокси. По умолчанию: <code class="mono">/config</code> и <code class="mono">/users</code>.</div>
+    </div>
+    <div class="status" :class="statusClass">{{ statusText }}</div>
+  </header>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Конфигурация</h2>
+
+      <div class="row2">
+        <div>
+          <label>Порт прокси (runtime менять нельзя)</label>
+          <input type="number" v-model.number="cfg.port" disabled />
+        </div>
+        <div>
+          <label>TLS домен</label>
+          <input type="text" v-model.trim="cfg.tls_domain" placeholder="например yandex.ru" />
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px;">
+        <div>
+          <label>Advertising Tag (AD_TAG)</label>
+          <input type="text" v-model.trim="cfg.ad_tag" placeholder="32 hex (опционально)" />
+          <div class="note">Если включаешь рекламу через @MTProxybot — вставь тег сюда. Иначе оставь пустым.</div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px;">
+        <label>Режимы</label>
+        <div class="toggles">
+          <label class="toggle"><input type="checkbox" v-model="cfg.modes.classic" /> classic</label>
+          <label class="toggle"><input type="checkbox" v-model="cfg.modes.secure" /> secure</label>
+          <label class="toggle"><input type="checkbox" v-model="cfg.modes.tls" /> tls</label>
+        </div>
+        <div class="note">Прокси автоматически reload-ится после сохранения.</div>
+      </div>
+
+      <div class="actions">
+        <button class="primary" @click="saveConfig" :disabled="busy">Сохранить</button>
+        <button @click="refresh" :disabled="busy">Обновить</button>
+      </div>
+
+      <div class="note">
+        API base URL:
+        <input type="text" v-model.trim="apiBase" class="mono" style="margin-top:6px;" placeholder="например http://127.0.0.1:8080" />
+        <div style="margin-top:6px;">Если UI открыт с того же хоста/порта, оставь пустым.</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Пользователи (USERS)</h2>
+
+      <div class="row">
+        <div class="row2">
+          <div>
+            <label>Имя</label>
+            <input type="text" v-model.trim="newUser.name" placeholder="tg" />
+          </div>
+          <div>
+            <label>Secret (32 hex)</label>
+            <input type="text" v-model.trim="newUser.secret" placeholder="0123456789abcdef..." class="mono" />
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="primary" @click="createUser" :disabled="busy || !newUser.name || !newUser.secret">Добавить</button>
+        </div>
+
+        <table v-if="userList.length">
+          <thead>
+            <tr>
+              <th>Имя</th>
+              <th>Secret</th>
+              <th class="right">Действия</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="u in userList" :key="u.name">
+              <td class="mono">{{ u.name }}</td>
+              <td class="mono">{{ u.secret }}</td>
+              <td class="right">
+                <span class="pill">
+                  <button @click="startEdit(u)" :disabled="busy">Изменить</button>
+                  <button class="danger" @click="deleteUser(u.name)" :disabled="busy">Удалить</button>
+                </span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div v-else class="note">Пользователей нет.</div>
+      </div>
+
+      <div v-if="editUser.open" class="card" style="margin-top:14px; padding: 14px;">
+        <h2 style="margin-bottom:10px;">Изменить пользователя: <span class="mono">{{ editUser.name }}</span></h2>
+        <label>Новый secret (32 hex)</label>
+        <input type="text" v-model.trim="editUser.secret" class="mono" />
+        <div class="actions">
+          <button class="primary" @click="applyEdit" :disabled="busy || !editUser.secret">Сохранить</button>
+          <button @click="cancelEdit" :disabled="busy">Отмена</button>
+        </div>
+      </div>
+
+      <div class="note" style="margin-top:10px;">
+        Подсказка: Secret — 32 hex-символа. После добавления/изменения прокси reload-ится автоматически.
+      </div>
+    </section>
+  </div>
+</div>
+
+<script>
+const { createApp } = Vue
+
+createApp({
+  data() {
+    return {
+      apiBase: "",
+      busy: false,
+      statusText: "", 
+      statusKind: "",
+      cfg: {
+        port: 443,
+        tls_domain: "",
+        ad_tag: "",
+        modes: { classic: false, secure: true, tls: true },
+        users: {}
+      },
+      newUser: { name: "", secret: "" },
+      editUser: { open: false, name: "", secret: "" }
+    }
+  },
+  computed: {
+    statusClass() {
+      if (this.statusKind === "ok") return "ok"
+      if (this.statusKind === "err") return "err"
+      return ""
+    },
+    userList() {
+      const obj = this.cfg.users || {}
+      return Object.keys(obj)
+        .sort()
+        .map((k) => ({ name: k, secret: String(obj[k]) }))
+    }
+  },
+  methods: {
+    endpoint(path) {
+      const base = (this.apiBase || "").replace(/\/$/, "")
+      if (!base) return path
+      return base + path
+    },
+    setStatus(kind, text) {
+      this.statusKind = kind
+      this.statusText = text
+    },
+    async apiFetch(path, opts) {
+      const res = await fetch(this.endpoint(path), {
+        headers: { "Content-Type": "application/json" },
+        ...opts
+      })
+      const ct = res.headers.get("content-type") || ""
+      let body = null
+      if (ct.includes("application/json")) body = await res.json()
+      else body = await res.text()
+      if (!res.ok) {
+        const detail = body && body.detail ? body.detail : body
+        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail))
+      }
+      return body
+    },
+    async refresh() {
+      this.busy = true
+      try {
+        const cfg = await this.apiFetch("/config", { method: "GET" })
+        this.cfg = cfg
+        this.setStatus("ok", "Загружено")
+      } catch (e) {
+        this.setStatus("err", "Ошибка загрузки: " + e.message)
+      } finally {
+        this.busy = false
+      }
+    },
+    async saveConfig() {
+      this.busy = true
+      try {
+        const payload = JSON.parse(JSON.stringify(this.cfg))
+        await this.apiFetch("/config", { method: "PUT", body: JSON.stringify(payload) })
+        await this.refresh()
+        this.setStatus("ok", "Сохранено и применено")
+      } catch (e) {
+        this.setStatus("err", "Ошибка сохранения: " + e.message)
+      } finally {
+        this.busy = false
+      }
+    },
+    async createUser() {
+      this.busy = true
+      try {
+        const payload = { name: this.newUser.name, secret: this.newUser.secret }
+        await this.apiFetch("/users", { method: "POST", body: JSON.stringify(payload) })
+        this.newUser.name = ""
+        this.newUser.secret = ""
+        await this.refresh()
+        this.setStatus("ok", "Пользователь добавлен")
+      } catch (e) {
+        this.setStatus("err", "Ошибка добавления: " + e.message)
+      } finally {
+        this.busy = false
+      }
+    },
+    startEdit(u) {
+      this.editUser.open = true
+      this.editUser.name = u.name
+      this.editUser.secret = u.secret
+    },
+    cancelEdit() {
+      this.editUser.open = false
+      this.editUser.name = ""
+      this.editUser.secret = ""
+    },
+    async applyEdit() {
+      this.busy = true
+      try {
+        const payload = { secret: this.editUser.secret }
+        await this.apiFetch(`/users/${encodeURIComponent(this.editUser.name)}`, { method: "PUT", body: JSON.stringify(payload) })
+        this.cancelEdit()
+        await this.refresh()
+        this.setStatus("ok", "Пользователь обновлён")
+      } catch (e) {
+        this.setStatus("err", "Ошибка обновления: " + e.message)
+      } finally {
+        this.busy = false
+      }
+    },
+    async deleteUser(name) {
+      if (!confirm(`Удалить пользователя ${name}?`)) return
+      this.busy = true
+      try {
+        await this.apiFetch(`/users/${encodeURIComponent(name)}`, { method: "DELETE" })
+        await this.refresh()
+        this.setStatus("ok", "Пользователь удалён")
+      } catch (e) {
+        this.setStatus("err", "Ошибка удаления: " + e.message)
+      } finally {
+        this.busy = false
+      }
+    }
+  },
+  mounted() {
+    this.setStatus("", "")
+    this.refresh()
+  }
+}).mount('#app')
+</script>
+</body>
+</html>
