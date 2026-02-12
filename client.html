@@ -71,6 +71,7 @@
     .plans { display:grid; grid-template-columns: 1fr; gap: 10px; margin-top: 10px; }
     @media (min-width: 700px) { .plans { grid-template-columns: 1fr 1fr 1fr; } }
     .plan { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: #f8fafc; }
+    .plan.active { border-color: var(--accent); background: rgba(37,99,235,0.05); box-shadow: 0 0 0 2px rgba(37,99,235,0.1); }
     .plan .name { font-weight: 700; }
     .plan .price { margin-top: 6px; font-size: 13px; color: var(--muted); }
     code { background: #f1f5f9; padding: 2px 6px; border-radius: 8px; border: 1px solid var(--border); }
@@ -84,81 +85,338 @@
     th { color: var(--muted); font-weight: 600; }
     .right { text-align: right; }
     .actions { display:flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+    footer {
+      margin-top: 48px;
+      padding: 24px 0;
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    footer h3 {
+      font-size: 14px;
+      margin: 0 0 8px 0;
+      color: var(--text);
+    }
+    footer .links {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    footer .links a {
+      color: var(--accent);
+    }
+    footer .disclaimer {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      margin-top: 16px;
+    }
+    footer .disclaimer h4 {
+      font-size: 13px;
+      margin: 0 0 8px 0;
+      color: var(--text);
+    }
+    .faq-section {
+      margin-top: 24px;
+    }
+    .faq-item {
+      margin-bottom: 16px;
+      padding: 12px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .faq-question {
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: var(--text);
+    }
+    .faq-answer {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+    .order-card {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .order-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .order-header h3 {
+      margin: 0;
+      font-size: 16px;
+      color: var(--text);
+    }
+    .order-status {
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .order-status.pending {
+      background: rgba(250, 204, 21, 0.1);
+      color: #ca8a04;
+    }
+    .order-details {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .order-plan, .order-price {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+    }
+    .empty-icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+    }
+    .empty-text {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+    .empty-subtext {
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .proxy-card {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-top: 12px;
+    }
+    .proxy-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 16px;
+    }
+    .proxy-title {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    .proxy-icon {
+      font-size: 32px;
+    }
+    .proxy-title h4 {
+      margin: 0;
+      font-size: 16px;
+      color: var(--text);
+    }
+    .proxy-id {
+      font-size: 12px;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+    .proxy-status {
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .proxy-status.active {
+      background: rgba(34, 197, 94, 0.1);
+      color: #16a34a;
+    }
+    .proxy-status.expired {
+      background: rgba(239, 68, 68, 0.1);
+      color: #dc2626;
+    }
+    .subscription-info {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 16px;
+    }
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .info-row:last-child {
+      margin-bottom: 0;
+    }
+    .info-row .label {
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .info-row .value {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .proxy-links {
+      margin-bottom: 16px;
+    }
+    .links-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .link-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+    }
+    .link-actions {
+      display: flex;
+      gap: 4px;
+    }
+    .link-mode {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+    .link-btn {
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+    .proxy-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 20px;
+    }
+    .modal-content {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px;
+      max-width: 500px;
+      width: 100%;
+      box-shadow: var(--shadow);
+    }
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--text);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      z-index: 1000;
+      animation: slideUp 0.3s ease;
+    }
+    .toast.ok {
+      background: var(--ok);
+    }
+    .toast.err {
+      background: var(--danger);
+    }
+    @keyframes slideUp {
+      from {
+        opacity: 0;
+        transform: translate(-50%, 20px);
+      }
+      to {
+        opacity: 1;
+        transform: translate(-50%, 0);
+      }
+    }
   </style>
 </head>
 <body>
 <div id="app" class="wrap">
   <header>
     <div>
-      <h1>Платный MTProto proxy</h1>
-      <div class="sub">Подписка + персональная ссылка и QR. Вход без пароля по ссылке из email/Telegram.</div>
+      <h1>Tgoxy</h1>
     </div>
     <div class="status" :class="statusClass">{{ statusText }}</div>
   </header>
 
   <div class="grid">
     <section v-if="view === 'landing'" class="card span-12">
-      <h2>Выбор тарифа и вход</h2>
+      <h2>Выберите тариф</h2>
       <div class="note">
-        Выбери тариф и укажи email или Telegram username — мы пришлём ссылку для входа.
+        Выберите подходящий тариф и укажите ваш email или Telegram username — мы отправим ссылку для входа.
       </div>
 
       <div class="plans">
-        <div class="plan">
+        <div class="plan" :class="{ active: selectedPlan === 'week' }">
           <div class="name">Неделя</div>
-          <div class="price">7 дней</div>
+          <div class="price">₽100 / 7 дней</div>
           <div class="actions">
             <button class="primary" @click="selectPlan('week')" :disabled="busy">Выбрать</button>
           </div>
         </div>
-        <div class="plan">
+        <div class="plan" :class="{ active: selectedPlan === 'month' }">
           <div class="name">Месяц</div>
-          <div class="price">30 дней</div>
+          <div class="price">₽250 / 30 дней</div>
           <div class="actions">
             <button class="primary" @click="selectPlan('month')" :disabled="busy">Выбрать</button>
           </div>
         </div>
-        <div class="plan">
+        <div class="plan" :class="{ active: selectedPlan === 'year' }">
           <div class="name">Год</div>
-          <div class="price">365 дней</div>
+          <div class="price">₽2000 / 365 дней</div>
           <div class="actions">
             <button class="primary" @click="selectPlan('year')" :disabled="busy">Выбрать</button>
           </div>
         </div>
       </div>
 
-      <div class="note" style="margin-top:12px;">
-        Текущий выбор: <code class="mono">{{ selectedPlan }}</code>
-      </div>
-
       <div class="row" style="margin-top:12px;">
         <div>
-          <label>Email (или Telegram username)</label>
-          <input type="email" v-model.trim="auth.email" placeholder="you@example.com" />
-        </div>
-        <div>
-          <label>Telegram username (или email)</label>
-          <input type="text" v-model.trim="auth.tg_username" placeholder="@username" />
+          <label>Для оплаты введите Email или Telegram username</label>
+          <input type="text" v-model.trim="auth.contact" placeholder="you@example.com или @username" />
+          <div class="note" v-if="authError" style="color: var(--danger); margin-top: 4px;">{{ authError }}</div>
         </div>
       </div>
 
       <div class="actions">
-        <button class="primary" @click="startAuth" :disabled="busy || !selectedPlan || (!auth.email && !auth.tg_username)">Продолжить</button>
-        <button @click="loadMe" :disabled="busy">У меня уже есть кабинет</button>
+        <button class="primary" @click="startAuth" :disabled="!canContinue">Продолжить</button>
       </div>
     </section>
 
     <section v-if="view === 'confirm'" class="card span-12">
-      <h2>Подтверждение</h2>
+      <h2>Подтвердите аккаунт</h2>
 
       <div class="note" v-if="deliveryText">{{ deliveryText }}</div>
       <div class="note" v-else>Ссылка для входа создана.</div>
 
       <div class="note" v-if="delivery && delivery.telegram === 'sent'" style="margin-top:10px;">
-        Перейди в Telegram и открой ссылку для входа.
+        Перейдите в Telegram и откройте ссылку для входа.
       </div>
       <div class="note" v-if="delivery && delivery.email === 'sent'" style="margin-top:10px;">
-        Проверь почту и открой ссылку для входа.
+        Проверьте почту и откройте ссылку для входа.
       </div>
 
       <div v-if="tgStartUrl" class="note" style="margin-top:10px;">
@@ -170,21 +428,37 @@
         </div>
       </div>
 
-      <div v-if="devLink" class="note" style="margin-top:10px;">
-        Dev-ссылка (пока нет отправки):
-        <div class="mono" style="margin-top:6px; word-break: break-all;">{{ devLink }}</div>
-        <div class="actions" style="margin-top:10px;">
-          <button @click="openDevLink" :disabled="busy">Открыть</button>
-          <button @click="copyDevLink" :disabled="busy">Копировать</button>
-        </div>
-      </div>
-
       <div class="actions">
         <button @click="goLanding" :disabled="busy">Назад</button>
       </div>
+    </section>
 
-      <div class="note">
-        Чтобы dev-ссылка появилась тут, запусти с env <code class="mono">DEV_ISSUE_LINKS=1</code>.
+    <section v-if="view === 'landing'" class="card span-12 faq-section">
+      <h2>Часто задаваемые вопросы (FAQ)</h2>
+      
+      <div class="faq-item">
+        <div class="faq-question">Что такое Tgoxy?</div>
+        <div class="faq-answer">Tgoxy — это сервис MTProto прокси, который обеспечивает стабильное и быстрое подключение к Telegram, улучшая качество соединения и снижая задержки.</div>
+      </div>
+      
+      <div class="faq-item">
+        <div class="faq-question">Как работает оплата?</div>
+        <div class="faq-answer">Мы принимаем оплату через YooKassa. После выбора тарифа и ввода контактных данных, вы получите ссылку для входа в личный кабинет, где сможете оплатить подписку.</div>
+      </div>
+      
+      <div class="faq-item">
+        <div class="faq-question">Что происходит после оплаты?</div>
+        <div class="faq-answer">Сразу после успешной оплаты в вашем личном кабинете появится прокси-аккаунт с уникальной ссылкой и QR-кодом для подключения к Telegram.</div>
+      </div>
+      
+      <div class="faq-item">
+        <div class="faq-question">Можно ли использовать на нескольких устройствах?</div>
+        <div class="faq-answer">Да, вы можете использовать один прокси-аккаунт на нескольких устройствах одновременно. Лимит подключений можно настроить в личном кабинете.</div>
+      </div>
+      
+      <div class="faq-item">
+        <div class="faq-question">Что делать, если соединение пропало?</div>
+        <div class="faq-answer">Попробуйте пересоздать прокси в личном кабинете. Если проблема не решится, обратитесь в поддержку через форму обратной связи.</div>
       </div>
     </section>
 
@@ -206,27 +480,38 @@
       </div>
 
       <div class="card" style="margin-top:12px; padding: 14px;">
-        <h2 style="margin-bottom:8px;">Покупки / оплата (заглушка)</h2>
-        <div class="note">Каждый прокси-аккаунт оплачивается отдельно. После оплаты появится новый прокси.</div>
+        <h2 style="margin-bottom:8px;">Покупки и оплата</h2>
+        <div class="note">Каждый прокси-аккаунт оплачивается отдельно. После оплаты появится новый прокси-сервер.</div>
 
         <div class="actions">
-          <button class="primary" @click="createOrder('week')" :disabled="busy">Купить на неделю</button>
-          <button class="primary" @click="createOrder('month')" :disabled="busy">Купить на месяц</button>
-          <button class="primary" @click="createOrder('year')" :disabled="busy">Купить на год</button>
+          <button class="primary" :class="{'active-plan': me.orders && me.orders.length && me.orders[0].plan === 'week'}" @click="createOrder('week')" :disabled="busy">₽100 / Неделя</button>
+          <button class="primary" :class="{'active-plan': me.orders && me.orders.length && me.orders[0].plan === 'month'}" @click="createOrder('month')" :disabled="busy">₽250 / Месяц</button>
+          <button class="primary" :class="{'active-plan': me.orders && me.orders.length && me.orders[0].plan === 'year'}" @click="createOrder('year')" :disabled="busy">₽2000 / Год</button>
         </div>
 
         <div v-if="!(me.orders && me.orders.length)" class="note" style="margin-top:10px;">Нет ожидающих оплат.</div>
 
-        <div v-else class="card" style="margin-top:12px; padding: 14px;">
-          <div class="mono">order_id={{ me.orders[0].id }}</div>
-          <div class="mono">plan={{ me.orders[0].plan }}</div>
-          <div class="mono">status={{ me.orders[0].status }}</div>
-          <div class="actions" style="margin-top:10px;">
+        <div v-else class="order-card" style="margin-top:12px;">
+          <div class="order-header">
+            <h3>Текущий заказ</h3>
+            <span class="order-status" :class="me.orders[0].status">{{ me.orders[0].status === 'pending' ? 'Ожидает оплаты' : me.orders[0].status }}</span>
+          </div>
+          <div class="order-details">
+            <div class="order-plan">
+              <span class="label">Тариф:</span>
+              <span class="value">{{ getPlanName(me.orders[0].plan) }}</span>
+            </div>
+            <div class="order-price">
+              <span class="label">Стоимость:</span>
+              <span class="value">{{ getPlanPrice(me.orders[0].plan) }}</span>
+            </div>
+          </div>
+          <div class="actions" style="margin-top:16px;">
             <button class="primary" @click="payOrder(me.orders[0].id)" :disabled="busy">Оплатить</button>
             <button class="danger" @click="cancelOrder" :disabled="busy">Отменить</button>
           </div>
-          <div class="note" style="margin-top:10px;">Кнопки неделя/месяц/год меняют период в этом заказе.</div>
-          <div class="note" style="margin-top:10px;">После оплаты прокси появится автоматически. Нажми «Обновить», если не появилось сразу.</div>
+          <div class="note" style="margin-top:12px;">Вы можете изменить тариф перед оплатой — нажмите на другую кнопку выше.</div>
+          <div class="note" style="margin-top:8px;">После оплаты прокси-сервер будет создан автоматически.</div>
         </div>
       </div>
 
@@ -240,66 +525,133 @@
 
       <div class="card" style="margin-top:12px; padding: 14px;">
         <h2 style="margin-bottom:8px;">Прокси</h2>
-        <div class="note">Прокси-аккаунты независимы. У каждого своя подписка.</div>
+        <div class="note">Прокси-аккаунты работают независимо. У каждого свой срок действия подписки.</div>
 
-        <div v-if="!(me.proxy && me.proxy.accounts && me.proxy.accounts.length)" class="note" style="margin-top:10px;">
-          Пока нет созданных прокси.
+        <div v-if="!(me.proxy && me.proxy.accounts && me.proxy.accounts.length)" class="empty-state" style="margin-top:10px;">
+          <div class="empty-icon">📡</div>
+          <div class="empty-text">У вас пока нет прокси-серверов</div>
+          <div class="empty-subtext">Выберите и оплатите тариф выше, чтобы создать первый сервер</div>
         </div>
 
-        <div v-for="acc in (me.proxy.accounts || [])" :key="acc.id" class="card" style="margin-top:12px; padding: 14px;">
-          <div class="note">proxy_user: <code class="mono">{{ acc.proxy_user }}</code></div>
-
-          <div class="note" style="margin-top:8px;">
-            подписка: <code class="mono">{{ (acc.subscription && acc.subscription.status) || 'none' }}</code>
-            <span v-if="acc.subscription && acc.subscription.plan">, plan=<code class="mono">{{ acc.subscription.plan }}</code></span>
-            <span v-if="acc.subscription && acc.subscription.ends_at">, ends_at=<code class="mono">{{ fmtTs(acc.subscription.ends_at) }}</code></span>
+        <div v-for="acc in (me.proxy.accounts || [])" :key="acc.id" class="proxy-card">
+          <div class="proxy-header">
+            <div class="proxy-title">
+              <div class="proxy-icon">🔐</div>
+              <div>
+                <h4>Прокси-сервер</h4>
+                <div class="proxy-id">ID: {{ acc.proxy_user }}</div>
+              </div>
+            </div>
+            <div class="proxy-status" :class="acc.subscription && acc.subscription.status">
+              {{ getStatusText(acc.subscription && acc.subscription.status) }}
+            </div>
           </div>
-
-          <div class="actions">
-            <button @click="recreateProxy(acc.id)" :disabled="busy || !(acc.subscription && acc.subscription.status === 'active')">Пересоздать</button>
-            <button class="danger" @click="deleteProxy(acc.id)" :disabled="busy">Удалить</button>
+          
+          <div v-if="acc.subscription" class="subscription-info">
+            <div class="info-row">
+              <span class="label">Тариф:</span>
+              <span class="value">{{ getPlanName(acc.subscription.plan) }}</span>
+            </div>
+            <div class="info-row">
+              <span class="label">Действует до:</span>
+              <span class="value">{{ fmtTs(acc.subscription.ends_at) }}</span>
+            </div>
           </div>
-
-          <div v-if="(acc.links || []).length" style="margin-top:12px;">
-            <label>Ссылки</label>
-            <table style="margin-top:6px;">
-              <thead>
-                <tr>
-                  <th>Mode</th>
-                  <th>Link</th>
-                  <th class="right">QR</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="l in acc.links" :key="acc.id + ':' + l.mode">
-                  <td class="mono">{{ l.mode }}</td>
-                  <td class="mono" style="word-break: break-all;">{{ l.link }}</td>
-                  <td class="right"><button @click="openQr(l)" :disabled="busy">QR</button></td>
-                </tr>
-              </tbody>
-            </table>
+          
+          <div v-if="(acc.links || []).length" class="proxy-links">
+            <label>Ссылки для подключения</label>
+            <div class="links-grid">
+              <div v-for="l in acc.links" :key="acc.id + ':' + l.mode" class="link-item">
+                <span class="link-mode">{{ l.mode }}</span>
+                <div class="link-actions">
+                  <button class="link-btn" @click="copyLink(l.link)" :disabled="busy">Ссылка</button>
+                  <button class="link-btn" @click="openQr(l)" :disabled="busy">QR</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="proxy-actions">
+            <button class="primary" @click="confirmRecreateProxy(acc.id)" :disabled="busy || !(acc.subscription && acc.subscription.status === 'active')">
+              Пересоздать сервер
+            </button>
           </div>
         </div>
       </div>
 
     </section>
 
-    <section v-if="qr.open" class="card span-12">
-      <h2>QR</h2>
+    <section v-if="view === 'cabinet'" class="card span-12 faq-section">
+      <h2>Часто задаваемые вопросы (FAQ)</h2>
+      
+      <div class="faq-item">
+        <div class="faq-question">Как продлить подписку?</div>
+        <div class="faq-answer">В разделе "Покупки / оплата" выберите нужный тариф и нажмите "Оплатить". После успешной оплаты подписка будет автоматически продлена.</div>
+      </div>
+      
+      <div class="faq-item">
+        <div class="faq-question">Что делать, если прокси не работает?</div>
+        <div class="faq-answer">Попробуйте пересоздать прокси с помощью кнопки "Пересоздать". Если это не помогло, обратитесь в поддержку.</div>
+      </div>
+      
+      <div class="faq-item">
+        <div class="faq-question">Как изменить тариф?</div>
+        <div class="faq-answer">Вы можете купить новый прокси с другим тарифом. Старый прокси продолжит работать до окончания оплаченного периода.</div>
+      </div>
+      
+      <div class="faq-item">
+        <div class="faq-question">Где найти мои ссылки для подключения?</div>
+        <div class="faq-answer">Ссылки и QR-коды находятся в разделе "Прокси" под каждым вашим прокси-аккаунтом. Доступны три режима: classic, secure, tls.</div>
+      </div>
+      
+      <div class="faq-item">
+        <div class="faq-question">Как отменить подписку?</div>
+        <div class="faq-answer">Подписка автоматически прекращается после окончания оплаченного периода. Дополнительных действий не требуется.</div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Модальное окно QR -->
+  <div v-if="qr.open" class="modal-overlay" @click.self="closeQr">
+    <div class="modal-content">
+      <h2 style="margin: 0 0 16px 0;">QR-код для подключения</h2>
       <div class="qr">
         <div class="qr-box" ref="qrBox"></div>
         <div>
-          <label>Ссылка</label>
+          <label>Ссылка для подключения</label>
           <input type="text" class="mono" :value="qr.link" readonly />
-          <div class="actions">
+          <div class="actions" style="margin-top: 12px;">
             <button class="primary" @click="copyQrLink" :disabled="busy || !qr.link">Копировать</button>
             <button @click="closeQr" :disabled="busy">Закрыть</button>
           </div>
-          <div class="note">Отсканируй QR в Telegram.</div>
+          <div class="note" style="margin-top: 12px;">Отсканируйте QR-код в Telegram для подключения</div>
         </div>
       </div>
-    </section>
+    </div>
   </div>
+
+  <div v-if="toast.show" class="toast" :class="toast.type">
+    {{ toast.text }}
+  </div>
+
+  <footer>
+    <div class="links">
+      <a href="#" @click.prevent>Публичная оферта</a>
+      <a href="#" @click.prevent>Политика конфиденциальности</a>
+      <a href="#" @click.prevent>Поддержка</a>
+    </div>
+    
+    <div class="disclaimer">
+      <h4>Политика использования сервиса:</h4>
+      Услуга предназначена для улучшения качества соединения (стабилизации ping, устранения jitter) при работе с легальными общедоступными сервисами и приложениями.<br><br>
+      <strong>Запрещено:</strong> Использование предоставленных шлюзов для совершения противоправных действий, распространения вредоносного ПО, спама, а также для доступа к информационным ресурсам, ограниченным на территории РФ в соответствии с законодательством. При выявлении нарушений доступ блокируется без возврата средств.
+    </div>
+    
+    <div style="margin-top: 16px; text-align: center;">
+      2024 Tgoxy. Все права защищены.
+    </div>
+  </footer>
 </div>
 
 <script>
@@ -313,14 +665,15 @@ createApp({
       statusKind: "",
       view: "landing",
       selectedPlan: "week",
-      auth: { email: "", tg_username: "" },
+      auth: { contact: "" },
       devLink: "",
       tgStartUrl: "",
       tgBot: "",
       delivery: { email: "", telegram: "" },
       me: null,
       qr: { open: false, link: "" },
-      payment: { open: false, orderId: 0, widget: null }
+      payment: { open: false, orderId: 0, widget: null },
+      toast: { show: false, text: "", type: "" }
     }
   },
   computed: {
@@ -335,6 +688,18 @@ createApp({
       if (!b) return '@your_bot'
       if (b.startsWith('@')) return b
       return '@' + b
+    },
+    authError() {
+      if (!this.auth.contact) return ""
+      const isEmail = this.auth.contact.includes('@') && !this.auth.contact.startsWith('@')
+      const isTelegram = this.auth.contact.startsWith('@') && this.auth.contact.length > 1
+      if (!isEmail && !isTelegram) {
+        return "Введите корректный email (you@example.com) или Telegram username (@username)"
+      }
+      return ""
+    },
+    canContinue() {
+      return !this.busy && this.selectedPlan && this.auth.contact && !this.authError
     },
     deliveryText() {
       const d = this.delivery || {}
@@ -374,6 +739,9 @@ createApp({
       this.view = 'landing'
       this.setStatus('', '')
     },
+    validateContact() {
+      // Валидация теперь работает через computed свойство authError
+    },
     async startAuth() {
       this.busy = true
       try {
@@ -381,7 +749,13 @@ createApp({
         this.tgStartUrl = ""
         this.tgBot = ""
         this.delivery = { email: "", telegram: "" }
-        const payload = { plan: this.selectedPlan, email: this.auth.email || "", tg_username: this.auth.tg_username || "" }
+        const payload = { plan: this.selectedPlan, email: "", tg_username: "" }
+        const isEmail = this.auth.contact.includes('@') && !this.auth.contact.startsWith('@')
+        if (isEmail) {
+          payload.email = this.auth.contact
+        } else {
+          payload.tg_username = this.auth.contact
+        }
         const resp = await this.apiFetch('/client/auth/start', { method: 'POST', body: JSON.stringify(payload) })
         this.devLink = resp.dev_link || ""
         this.tgStartUrl = resp.tg_start_url || ""
@@ -401,9 +775,9 @@ createApp({
     async copyTgStart() {
       try {
         await navigator.clipboard.writeText(this.tgStartUrl)
-        this.setStatus('ok', 'Ссылка Telegram скопирована')
+        this.showToast('Ссылка Telegram скопирована', 'ok')
       } catch (e) {
-        this.setStatus('err', 'Не удалось скопировать')
+        this.showToast('Не удалось скопировать', 'err')
       }
     },
     openDevLink() {
@@ -412,9 +786,9 @@ createApp({
     async copyDevLink() {
       try {
         await navigator.clipboard.writeText(this.devLink)
-        this.setStatus('ok', 'Ссылка скопирована')
+        this.showToast('Ссылка скопирована', 'ok')
       } catch (e) {
-        this.setStatus('err', 'Не удалось скопировать')
+        this.showToast('Не удалось скопировать', 'err')
       }
     },
     async loadMe() {
@@ -439,6 +813,7 @@ createApp({
     },
     async createOrder(plan) {
       this.busy = true
+      this.closePayment() // Close payment widget on order change
       try {
         const resp = await this.apiFetch('/client/proxy/create', { method: 'POST', body: JSON.stringify({ plan: plan }) })
         this.setStatus('ok', 'Создали заказ на оплату')
@@ -512,6 +887,7 @@ createApp({
     },
     async cancelOrder() {
       this.busy = true
+      this.closePayment() // Close payment widget on order cancellation
       try {
         await this.apiFetch('/client/order/cancel', { method: 'POST', body: '{}' })
         this.setStatus('ok', 'Заказ отменён')
@@ -549,7 +925,9 @@ createApp({
     openQr(l) {
       this.qr.open = true
       this.qr.link = l.link
-      this.$nextTick(() => this.renderQr())
+      this.$nextTick(() => {
+        this.renderQr()
+      })
     },
     closeQr() {
       this.qr.open = false
@@ -560,32 +938,63 @@ createApp({
         if (!this.qr.link) return
         const box = this.$refs.qrBox
         if (!box) return
-        if (typeof QRCode === 'undefined') throw new Error('QRCode library not loaded')
         while (box.firstChild) box.removeChild(box.firstChild)
         new QRCode(box, { text: this.qr.link, width: 220, height: 220, correctLevel: QRCode.CorrectLevel.M })
       } catch (e) {
-        this.setStatus('err', 'QR ошибка: ' + e.message)
+        this.showToast('QR ошибка: ' + e.message, 'err')
       }
     },
     async copyQrLink() {
       try {
         await navigator.clipboard.writeText(this.qr.link)
-        this.setStatus('ok', 'Ссылка скопирована')
+        this.showToast('Ссылка скопирована', 'ok')
       } catch (e) {
-        this.setStatus('err', 'Не удалось скопировать')
+        this.showToast('Не удалось скопировать', 'err')
       }
     },
-    async logout() {
-      this.busy = true
+    async copyLink(link) {
       try {
-        await this.apiFetch('/client/logout', { method: 'POST', body: '{}' })
-        this.me = null
-        this.view = 'landing'
-        this.setStatus('ok', 'Вы вышли')
+        await navigator.clipboard.writeText(link)
+        this.showToast('Ссылка скопирована', 'ok')
       } catch (e) {
-        this.setStatus('err', 'Ошибка выхода: ' + e.message)
-      } finally {
-        this.busy = false
+        this.showToast('Не удалось скопировать ссылку', 'err')
+      }
+    },
+    showToast(text, type = 'ok') {
+      this.toast.show = true
+      this.toast.text = text
+      this.toast.type = type
+      setTimeout(() => {
+        this.toast.show = false
+      }, 3000)
+    },
+    getPlanName(plan) {
+      const names = {
+        'week': 'Неделя',
+        'month': 'Месяц',
+        'year': 'Год'
+      }
+      return names[plan] || plan
+    },
+    getPlanPrice(plan) {
+      const prices = {
+        'week': '₽100',
+        'month': '₽250',
+        'year': '₽2000'
+      }
+      return prices[plan] || '—'
+    },
+    getStatusText(status) {
+      const statuses = {
+        'active': 'Активен',
+        'expired': 'Истёк',
+        'pending': 'Ожидает оплаты'
+      }
+      return statuses[status] || status || 'Нет статуса'
+    },
+    confirmRecreateProxy(accountId) {
+      if (confirm('⚠️ Внимание!\n\nПри пересоздании прокси-сервера:\n• Старые ссылки и QR-коды перестанут работать\n• Вам нужно будет настроить подключение заново на всех устройствах\n• Новые данные появятся в личном кабинете после пересоздания\n\nПродолжить?')) {
+        this.recreateProxy(accountId)
       }
     }
   },
