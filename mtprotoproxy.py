@@ -25,31 +25,9 @@ import secrets
 import json
 
 
-def _load_dotenv(path: str = ".env") -> None:
-    try:
-        if not os.path.exists(path):
-            return
-        with open(path, "r", encoding="utf-8") as f:
-            for raw in f:
-                line = raw.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                key = k.strip()
-                if not key:
-                    continue
-                val = v.strip()
-                if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
-                    val = val[1:-1]
-                if key not in os.environ:
-                    os.environ[key] = val
-    except Exception:
-        return
+from dotenv import load_dotenv
 
-
-_load_dotenv()
+load_dotenv()
 
 try:
     from utils.email_sender import EmailSender
@@ -60,20 +38,20 @@ except Exception:  # pragma: no cover
     parse_start_payload = None
     backoff_sleep = None
 
-try:
-    import uvicorn
-    from fastapi import FastAPI, HTTPException, Request
-    from pydantic import BaseModel, Field
-except ImportError:  # pragma: no cover
-    uvicorn = None
-    FastAPI = None
-    HTTPException = None
-    Request = None
-    BaseModel = None
-    Field = None
+import uvicorn
+from fastapi import FastAPI, HTTPException, Request
+from pydantic import BaseModel, Field
 
 
 TG_DATACENTER_PORT = 443
+
+ERROR_UNKNOWN_PLAN = "unknown plan"
+
+SECONDS_IN_HOUR = 3600
+HOURS_IN_DAY = 24
+DAYS_IN_WEEK = 7
+DAYS_IN_MONTH = 30
+DAYS_IN_YEAR = 365
 
 TG_DATACENTERS_V4 = [
     "149.154.175.50", "149.154.167.51", "149.154.175.100",
@@ -109,9 +87,9 @@ PROXY_SECRET = bytes.fromhex(
     "54c490b079e31bef82ff0ee8f2b0a32756d249c5f21269816cb7061b265db212"
 )
 
-TG_BOT_TOKEN = os.environ.get("MTPROTO_TG_BOT_TOKEN", "").strip()
-TG_BOT_USERNAME = os.environ.get("MTPROTO_TG_BOT_USERNAME", "").strip()
-TG_BOT_POLL = os.environ.get("MTPROTO_TG_BOT_POLL", "").strip().lower() in ("1", "true", "yes", "on")
+TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "").strip()
+TG_BOT_USERNAME = os.environ.get("TG_BOT_USERNAME", "").strip()
+TG_BOT_POLL = os.environ.get("TG_BOT_POLL", "").strip().lower() in ("1", "true", "yes", "on")
 
 SKIP_LEN = 8
 PREKEY_LEN = 32
@@ -152,32 +130,32 @@ stats = collections.Counter()
 user_stats = collections.defaultdict(collections.Counter)
 
 config = {}
-config_source = os.environ.get("MTPROTO_CONFIG_SOURCE", "db")
+config_source = os.environ.get("CONFIG_SOURCE", "db")
 
-CONFIG_DB_PATH = os.environ.get("MTPROTO_CONFIG_DB", "./config.db")
-API_LISTEN_HOST = os.environ.get("MTPROTO_API_HOST", "127.0.0.1")
-API_LISTEN_PORT = int(os.environ.get("MTPROTO_API_PORT", "8080"))
+CONFIG_DB_PATH = os.environ.get("CONFIG_DB", "./config.db")
+API_LISTEN_HOST = os.environ.get("API_HOST", "127.0.0.1")
+API_LISTEN_PORT = int(os.environ.get("API_PORT", "8080"))
 
-CLIENT_PUBLIC_BASE_URL = os.environ.get("MTPROTO_PUBLIC_BASE_URL", "").strip()
-CLIENT_DEV_ISSUE_LINKS = os.environ.get("MTPROTO_DEV_ISSUE_LINKS", "").strip().lower() in (
+CLIENT_PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").strip()
+CLIENT_DEV_ISSUE_LINKS = os.environ.get("DEV_ISSUE_LINKS", "").strip().lower() in (
     "1",
     "true",
     "yes",
     "on",
 )
 
-YOOKASSA_SHOP_ID = os.environ.get("MTPROTO_YOOKASSA_SHOP_ID", "").strip()
-YOOKASSA_SECRET_KEY = os.environ.get("MTPROTO_YOOKASSA_SECRET_KEY", "").strip()
+YOOKASSA_SHOP_ID = os.environ.get("YOOKASSA_SHOP_ID", "").strip()
+YOOKASSA_SECRET_KEY = os.environ.get("YOOKASSA_SECRET_KEY", "").strip()
 YOOKASSA_API_BASE = "https://api.yookassa.ru/v3"
 YOOKASSA_CURRENCY = "RUB"
 
-QUIET = os.environ.get("MTPROTO_QUIET", "").strip().lower() in ("1", "true", "yes", "on")
+QUIET = os.environ.get("QUIET", "").strip().lower() in ("1", "true", "yes", "on")
 
-STATS_SAMPLE_PERIOD = int(os.environ.get("MTPROTO_STATS_SAMPLE_PERIOD", "10"))
-STATS_RETENTION_HOURS = int(os.environ.get("MTPROTO_STATS_RETENTION_HOURS", "168"))
+STATS_SAMPLE_PERIOD = int(os.environ.get("STATS_SAMPLE_PERIOD", "10"))
+STATS_RETENTION_HOURS = int(os.environ.get("STATS_RETENTION_HOURS", "168"))
 
-ADMIN_USER_ENV = os.environ.get("MTPROTO_ADMIN_USER")
-ADMIN_PASS_ENV = os.environ.get("MTPROTO_ADMIN_PASS")
+ADMIN_USER_ENV = os.environ.get("ADMIN_USER")
+ADMIN_PASS_ENV = os.environ.get("ADMIN_PASS")
 
 _config_db_inited = False
 _proxy_listen_port_at_start: int = 0
@@ -409,7 +387,7 @@ def _init_config_db() -> None:
                 "INSERT INTO kv(key, value, updated_at) VALUES(?, ?, ?)",
                 ("admin_pass_hash", pass_hash, now),
             )
-            print_err("Generated admin password (set MTPROTO_ADMIN_PASS to override): %s" % generated)
+            print_err("Generated admin password (set ADMIN_PASS to override): %s" % generated)
 
         # ensure at least one user exists
         has_user = conn.execute("SELECT 1 FROM users LIMIT 1").fetchone()
@@ -567,11 +545,7 @@ async def telegram_bot_poller():
             conn.commit()
 
     async def _to_thread(func, *args, **kwargs):
-        try:
-            return await asyncio.to_thread(func, *args, **kwargs)
-        except AttributeError:
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
+        return await asyncio.to_thread(func, *args, **kwargs)
 
     while True:
         try:
@@ -1221,87 +1195,33 @@ def apply_upstream_proxy_settings():
         del socket.origsocket
 
 
-def try_use_cryptography_module():
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-    from cryptography.hazmat.backends import default_backend
-
-    class CryptographyEncryptorAdapter:
-        __slots__ = ('encryptor', 'decryptor')
-
-        def __init__(self, cipher):
-            self.encryptor = cipher.encryptor()
-            self.decryptor = cipher.decryptor()
-
-        def encrypt(self, data):
-            return self.encryptor.update(data)
-
-        def decrypt(self, data):
-            return self.decryptor.update(data)
-
-    def create_aes_ctr(key, iv):
-        iv_bytes = int.to_bytes(iv, 16, "big")
-        cipher = Cipher(algorithms.AES(key), modes.CTR(iv_bytes), default_backend())
-        return CryptographyEncryptorAdapter(cipher)
-
-    def create_aes_cbc(key, iv):
-        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), default_backend())
-        return CryptographyEncryptorAdapter(cipher)
-
-    return create_aes_ctr, create_aes_cbc
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
 
 
-def try_use_pycrypto_or_pycryptodome_module():
-    from Crypto.Cipher import AES
-    from Crypto.Util import Counter
+class CryptographyEncryptorAdapter:
+    __slots__ = ('encryptor', 'decryptor')
 
-    def create_aes_ctr(key, iv):
-        ctr = Counter.new(128, initial_value=iv)
-        return AES.new(key, AES.MODE_CTR, counter=ctr)
+    def __init__(self, cipher):
+        self.encryptor = cipher.encryptor()
+        self.decryptor = cipher.decryptor()
 
-    def create_aes_cbc(key, iv):
-        return AES.new(key, AES.MODE_CBC, iv)
+    def encrypt(self, data):
+        return self.encryptor.update(data)
 
-    return create_aes_ctr, create_aes_cbc
-
-
-def use_slow_bundled_cryptography_module():
-    import pyaes
-
-    msg = "To make the program a *lot* faster, please install cryptography module: "
-    msg += "pip install cryptography\n"
-    print(msg, flush=True, file=sys.stderr)
-
-    class BundledEncryptorAdapter:
-        __slots__ = ('mode', )
-
-        def __init__(self, mode):
-            self.mode = mode
-
-        def encrypt(self, data):
-            encrypter = pyaes.Encrypter(self.mode, pyaes.PADDING_NONE)
-            return encrypter.feed(data) + encrypter.feed()
-
-        def decrypt(self, data):
-            decrypter = pyaes.Decrypter(self.mode, pyaes.PADDING_NONE)
-            return decrypter.feed(data) + decrypter.feed()
-
-    def create_aes_ctr(key, iv):
-        ctr = pyaes.Counter(iv)
-        return pyaes.AESModeOfOperationCTR(key, ctr)
-
-    def create_aes_cbc(key, iv):
-        mode = pyaes.AESModeOfOperationCBC(key, iv)
-        return BundledEncryptorAdapter(mode)
-    return create_aes_ctr, create_aes_cbc
+    def decrypt(self, data):
+        return self.decryptor.update(data)
 
 
-try:
-    create_aes_ctr, create_aes_cbc = try_use_cryptography_module()
-except ImportError:
-    try:
-        create_aes_ctr, create_aes_cbc = try_use_pycrypto_or_pycryptodome_module()
-    except ImportError:
-        create_aes_ctr, create_aes_cbc = use_slow_bundled_cryptography_module()
+def create_aes_ctr(key, iv):
+    iv_bytes = int.to_bytes(iv, 16, "big")
+    cipher = Cipher(algorithms.AES(key), modes.CTR(iv_bytes), default_backend())
+    return CryptographyEncryptorAdapter(cipher)
+
+
+def create_aes_cbc(key, iv):
+    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), default_backend())
+    return CryptographyEncryptorAdapter(cipher)
 
 
 def print_err(*params):
@@ -3296,43 +3216,36 @@ def _create_api_app():
         proxy: dict
 
     def _plan_to_seconds(plan: str) -> int:
-        p = (plan or "").strip().lower()
-        if p in ("week", "7d", "7", "неделя"):
-            return 7 * 24 * 3600
-        if p in ("month", "30d", "30", "месяц"):
-            return 30 * 24 * 3600
-        if p in ("year", "365d", "365", "год"):
-            return 365 * 24 * 3600
-        raise HTTPException(status_code=400, detail="unknown plan")
+        p = _plan_normalize(plan)
+        seconds_map = {
+            "week": DAYS_IN_WEEK * HOURS_IN_DAY * SECONDS_IN_HOUR,
+            "month": DAYS_IN_MONTH * HOURS_IN_DAY * SECONDS_IN_HOUR,
+            "year": DAYS_IN_YEAR * HOURS_IN_DAY * SECONDS_IN_HOUR
+        }
+        return seconds_map[p]
 
     def _plan_to_price_rub_db(conn: sqlite3.Connection, plan: str) -> str:
         p = _plan_normalize(plan)
-        key = ""
-        fallback = ""
-        if p == "week":
-            key = "yookassa_price_week"
-            fallback = "100.00"
-        elif p == "month":
-            key = "yookassa_price_month"
-            fallback = "250.00"
-        elif p == "year":
-            key = "yookassa_price_year"
-            fallback = "2000.00"
-        else:
-            raise HTTPException(status_code=400, detail="unknown plan")
-
+        key_map = {
+            "week": "yookassa_price_week",
+            "month": "yookassa_price_month",
+            "year": "yookassa_price_year"
+        }
+        
+        if p not in key_map:
+            raise HTTPException(status_code=400, detail=ERROR_UNKNOWN_PLAN)
+        
+        key = key_map[p]
+        value = str(_get_kv(conn, key)).strip()
+        
         try:
-            v = str(_get_kv(conn, key)).strip()
-        except Exception:
-            v = fallback
-
-        try:
-            n = float(v)
-            if n <= 0:
-                raise ValueError("non-positive")
-        except Exception:
-            n = float(fallback)
-        return f"{n:.2f}"
+            price = float(value)
+            if price <= 0:
+                raise ValueError("Price must be positive")
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=500, detail=f"Invalid price configuration for {plan}")
+        
+        return f"{price:.2f}"
 
     def _yookassa_api_request(method: str, path: str, body: dict | None, idempotence_key: str | None = None) -> dict:
         if not YOOKASSA_SHOP_ID or not YOOKASSA_SECRET_KEY:
@@ -3363,13 +3276,17 @@ def _create_api_app():
 
     def _plan_normalize(plan: str) -> str:
         p = (plan or "").strip().lower()
-        if p in ("week", "7d", "7", "неделя"):
-            return "week"
-        if p in ("month", "30d", "30", "месяц"):
-            return "month"
-        if p in ("year", "365d", "365", "год"):
-            return "year"
-        raise HTTPException(status_code=400, detail="unknown plan")
+        plan_map = {
+            "week": ("week", "7d", "7", "неделя"),
+            "month": ("month", "30d", "30", "месяц"),
+            "year": ("year", "365d", "365", "год")
+        }
+        
+        for normalized, variants in plan_map.items():
+            if p in variants:
+                return normalized
+        
+        raise HTTPException(status_code=400, detail=ERROR_UNKNOWN_PLAN)
 
     def _create_or_get_client(conn: sqlite3.Connection, email: str, tg_username: str) -> int:
         email_n = _sanitize_email(email)

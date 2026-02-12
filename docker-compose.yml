@@ -5,16 +5,17 @@ services:
     restart: unless-stopped
     network_mode: "host"
     environment:
-        - MTPROTO_API_HOST=0.0.0.0
-        - MTPROTO_API_PORT=8080
-        - MTPROTO_CONFIG_DB=/home/tgproxy/data/config.db
+        - API_HOST=0.0.0.0
+        - API_PORT=8080
+        - CONFIG_DB=/home/tgproxy/data/config.db
         # Optional:
-        # - MTPROTO_ADMIN_USER=admin
-        # - MTPROTO_ADMIN_PASS=your_password
-        # - MTPROTO_CONFIG_SOURCE=db
+        # - ADMIN_USER=admin
+        # - ADMIN_PASS=your_password
+        # - CONFIG_SOURCE=db
     volumes:
         - ./mtprotoproxy.py:/home/tgproxy/mtprotoproxy.py
         - ./ui.html:/home/tgproxy/ui.html
+        - ./utils:/home/tgproxy/utils
         - mtprotoproxy-data:/home/tgproxy/data
         # Alternatively, you can use a bind-mount, but ensure directory is writable by uid 10000:
         # - ./data:/home/tgproxy/data

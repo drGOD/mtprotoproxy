@@ -30,12 +30,12 @@ class EmailSender:
 
     @staticmethod
     def from_env() -> "EmailSender | None":
-        host = os.environ.get("MTPROTO_SMTP_HOST", "").strip()
-        port = os.environ.get("MTPROTO_SMTP_PORT", "").strip()
-        username = os.environ.get("MTPROTO_SMTP_USER", "").strip()
-        password = os.environ.get("MTPROTO_SMTP_PASS", "").strip()
-        from_email = os.environ.get("MTPROTO_SMTP_FROM", "").strip() or username
-        use_tls = _env_bool("MTPROTO_SMTP_TLS", True)
+        host = os.environ.get("SMTP_HOST", "").strip()
+        port = os.environ.get("SMTP_PORT", "").strip()
+        username = os.environ.get("SMTP_USER", "").strip()
+        password = os.environ.get("SMTP_PASS", "").strip()
+        from_email = os.environ.get("SMTP_FROM", "").strip() or username
+        use_tls = _env_bool("SMTP_TLS", True)
 
         if not host or not port or not from_email:
             return None
@@ -69,7 +69,7 @@ class EmailSender:
         else:
             with smtplib.SMTP(self.host, self.port) as s:
                 s.ehlo()
-                if _env_bool("MTPROTO_SMTP_STARTTLS", False):
+                if _env_bool("SMTP_STARTTLS", False):
                     s.starttls(context=context)
                     s.ehlo()
                 if self.username:

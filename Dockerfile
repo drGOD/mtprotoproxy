@@ -17,6 +17,7 @@ COPY --chown=tgproxy requirements.txt /home/tgproxy/
 RUN python3 -m pip install --no-cache-dir -r /home/tgproxy/requirements.txt
 
 COPY --chown=tgproxy mtprotoproxy.py ui.html /home/tgproxy/
+COPY --chown=tgproxy utils/ /home/tgproxy/utils/
 
 RUN mkdir -p /home/tgproxy/data
 

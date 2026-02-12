@@ -172,7 +172,7 @@
         <button class="primary" @click="doLogin" :disabled="busy || !login.username || !login.password">Войти</button>
       </div>
       <div class="note">
-        Пароль берётся из переменной окружения <code class="mono">MTPROTO_ADMIN_PASS</code>.
+        Пароль берётся из переменной окружения <code class="mono">ADMIN_PASS</code>.
         Если не задан — генерируется при первом запуске и выводится в stderr.
       </div>
       <div class="divider"></div>

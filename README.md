@@ -41,7 +41,7 @@ The proxy can run with embedded REST API and store its config in local sqlite.
 2. Run proxy + API in one process: `python3 mtprotoproxy.py`
 
 By default API listens on `127.0.0.1:8080`.
-You can change it using env vars: `MTPROTO_API_HOST`, `MTPROTO_API_PORT`.
+You can change it using env vars: `API_HOST`, `API_PORT`.
 
 Embedded one-page UI is available at `http://127.0.0.1:8080/` (or `/ui`).
 
@@ -63,11 +63,11 @@ Admin management endpoints:
 
 Admin credentials are configured via env vars:
 
-- `MTPROTO_ADMIN_USER` (default: `admin`)
-- `MTPROTO_ADMIN_PASS` (if not set, password is generated on first start and printed to stderr)
+- `ADMIN_USER` (default: `admin`)
+- `ADMIN_PASS` (if not set, password is generated on first start and printed to stderr)
 
-Config is stored in `./config.db` by default (env: `MTPROTO_CONFIG_DB`).
-Config source can be switched with `MTPROTO_CONFIG_SOURCE` (`db` or `file`).
+Config is stored in `./config.db` by default (env: `CONFIG_DB`).
+Config source can be switched with `CONFIG_SOURCE` (`db` or `file`).
 
 When you update config via API (`PUT /config`, `/users` endpoints), proxy automatically reloads it.
 Changing `PORT` at runtime is not supported and requires restart.
@@ -87,7 +87,7 @@ If you prefer a bind-mount to host folder, mount `./data:/home/tgproxy/data` and
 
 Useful env vars for docker-compose:
 
-- `MTPROTO_API_HOST=0.0.0.0` (to expose API/UI)
-- `MTPROTO_API_PORT=8080`
-- `MTPROTO_CONFIG_DB=/home/tgproxy/data/config.db`
-- `MTPROTO_ADMIN_USER`, `MTPROTO_ADMIN_PASS`
+- `API_HOST=0.0.0.0` (to expose API/UI)
+- `API_PORT=8080`
+- `CONFIG_DB=/home/tgproxy/data/config.db`
+- `ADMIN_USER`, `ADMIN_PASS`
